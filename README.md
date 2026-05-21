@@ -2,60 +2,79 @@
 
 AI-powered documentation for Simulink control models.
 
-**Status**: Phase 0 — project scaffold. See [`../ROADMAP.md`](../ROADMAP.md) for the full plan and [`../DOC_AGENT_BLUEPRINT.md`](../DOC_AGENT_BLUEPRINT.md) for the original v1 specification this rebuild is derived from.
+**Status**: Phase 1 — AI & Memory Core complete. See [`../ROADMAP.md`](../ROADMAP.md) for the full plan and [`../DOC_AGENT_BLUEPRINT.md`](../DOC_AGENT_BLUEPRINT.md) for the original v1 specification this rebuild is derived from.
 
 ---
 
 ## Quick start
 
-Requires **Python 3.11+** and **macOS / Linux / WSL**. (Native Windows works too; substitute the activation command.)
+Requires **Python 3.11+**.
 
 ```bash
-# 1. Enter the repo
 cd doc-agent
+make dev                       # creates .venv and installs everything
 
-# 2. Create a virtual environment
-python3.11 -m venv .venv
-source .venv/bin/activate          # macOS / Linux / WSL
-# .venv\Scripts\activate            # Windows PowerShell
-
-# 3. Install in editable mode (with dev tools)
-pip install --upgrade pip
-pip install -e ".[dev]"
-
-# 4. Get an Anthropic API key
-#    https://console.anthropic.com/settings/keys
-
-# 5. Configure
+# Get a key at https://console.anthropic.com/settings/keys
 cp .env.example .env
-# Open .env and paste your key after ANTHROPIC_API_KEY=
+# Edit .env, paste your key after ANTHROPIC_API_KEY=
 
-# 6. Verify connectivity (Phase 0 exit criterion)
-doc-agent ping
+source .venv/bin/activate
+doc-agent ping                 # connectivity check
+doc-agent chat                 # interactive chat with persistent memory
 ```
-
-Expected output on success:
-
-```
-Pinging claude-opus-4-7 via https://api.anthropic.com …
-  Status   ✓ Connected
-   Model   claude-opus-4-7
- Latency   ~450 ms
-   Reply   'pong'
-```
-
-If you see `Setup required`, your API key isn't in `.env` yet.
 
 ---
 
 ## Commands
 
+### Top-level
+
 | Command | Purpose |
 |---|---|
-| `doc-agent version` | Print version (no API call). |
+| `doc-agent version` | Print version. |
 | `doc-agent ping` | Verify Anthropic connectivity. Exit 0 = success. |
+| `doc-agent chat` | Interactive chat loop with persistent history and facts-aware system prompt. |
 
-You can also run as a module: `python -m doc_agent ping`.
+Chat flags: `--new` (start fresh, keep pinned), `--no-facts` (skip the facts block), `--no-stream`, `--max-tokens N`.
+
+Inside the chat loop, type `/help` for in-session commands (`/clear`, `/pin <id>`, `/unpin <id>`, `/history`, `/facts`, `/stats`, `/exit`).
+
+### Memory subcommands
+
+| Command | Purpose |
+|---|---|
+| `doc-agent memory show [-n N]` | Show stats + last N messages with their ids. |
+| `doc-agent memory clear` | Drop non-pinned messages. `--all` drops pinned too. |
+| `doc-agent memory pin <id>` | Pin a message so it always stays in context. |
+| `doc-agent memory unpin <id>` | Unpin a message. |
+
+### Facts subcommands
+
+| Command | Purpose |
+|---|---|
+| `doc-agent facts list` | List facts grouped by category. |
+| `doc-agent facts add "<text>" [-c category] [-p priority] [-k tag]` | Add a fact. |
+| `doc-agent facts remove <id>` | Remove a fact by its 10-char id. |
+| `doc-agent facts reload` | Re-read `facts.md` after editing it by hand. |
+
+Categories: `naming`, `domain`, `policy`, `other`. Priorities: `critical`, `high`, `normal`, `low`. Facts are stored in `project_lib/facts.md` — human-editable.
+
+---
+
+## Where data lives
+
+By default everything persists under `project_lib/` at the repo root (gitignored):
+
+```
+project_lib/
+├── conversation.json   # chat history (JSON)
+├── facts.md            # authoritative project facts (Markdown — edit by hand if you like)
+└── session.json        # lightweight key/value state
+```
+
+Override via the `DATA_DIR` environment variable in `.env`.
+
+A starter facts file is available at [`examples/facts.example.md`](examples/facts.example.md) — copy it to `project_lib/facts.md` to seed.
 
 ---
 
@@ -63,24 +82,27 @@ You can also run as a module: `python -m doc_agent ping`.
 
 ```
 doc-agent/
-├── src/doc_agent/         # Python package
+├── src/doc_agent/
 │   ├── __init__.py        # version
 │   ├── __main__.py        # `python -m doc_agent`
-│   ├── cli.py             # Typer commands (version, ping)
+│   ├── cli.py             # Typer commands (version, ping, chat, memory, facts)
 │   ├── config.py          # Settings (pydantic-settings)
 │   ├── ai/
-│   │   └── client.py      # AIClient wrapper around Anthropic SDK
-│   └── utils/
-│       └── logger.py      # Rich-backed logger
+│   │   ├── client.py      # AIClient: ping, chat, chat_stream — retry + backoff
+│   │   └── tokens.py      # Token estimator
+│   ├── memory/
+│   │   ├── conversation.py  # ConversationMemory (rolling window, pinning, JSON persist)
+│   │   ├── facts.py         # FactsMemory (markdown-backed, priority-ranked)
+│   │   └── session.py       # SessionStore (key/value JSON)
+│   └── utils/logger.py
 ├── matlab/                # Phase 2 — extraction scripts (.slx → JSON)
-├── tests/                 # pytest suite — no API calls
-├── examples/              # sample inputs (.slx, .sldd, A2L, ARXML)
+├── tests/                 # pytest, no API key required
+├── examples/              # facts.example.md, sample inputs
 ├── docs/                  # design notes
 ├── .env.example           # template — copy to .env
-├── .gitignore             # excludes .env, .venv, caches
 ├── Makefile               # install / dev / lint / test / ping / clean
 ├── pyproject.toml         # deps + entry point (PEP 621)
-└── README.md              # this file
+└── README.md
 ```
 
 ---
@@ -98,39 +120,30 @@ make clean      # remove caches and the .venv
 
 ---
 
-## Push to a private GitHub repo
+## Configuration (`.env`)
 
-After creating an **empty private repo** on github.com (no README, no .gitignore — we already have ours):
-
-```bash
-git init
-git add .
-git commit -m "Phase 0: project scaffold"
-git branch -M main
-git remote add origin git@github.com:YOUR_USERNAME/doc-agent.git
-git push -u origin main
-```
-
-The `.gitignore` already excludes `.env`, `.venv/`, build artifacts, and editor / OS junk. **Double-check** that `.env` is not staged before pushing:
-
-```bash
-git status              # .env should not appear
-git ls-files | grep -i env   # only .env.example should appear
-```
+| Variable | Default | Purpose |
+|---|---|---|
+| `ANTHROPIC_API_KEY` | *(required)* | Anthropic API key. |
+| `ANTHROPIC_BASE_URL` | `https://api.anthropic.com` | Only change for proxies. |
+| `AI_MODEL` | `claude-opus-4-7` | Default model. |
+| `LOG_LEVEL` | `INFO` | DEBUG / INFO / WARNING / ERROR. |
+| `DATA_DIR` | `project_lib` | Where memory/facts/session live. |
+| `MAX_HISTORY` | `12` | Max user+assistant messages kept in context. |
+| `MAX_TOKEN_BUDGET` | `40000` | Total input-side token budget. |
+| `RESPONSE_TOKEN_BUDGET` | `8000` | Tokens reserved for the model's reply. |
+| `FACTS_TOKEN_BUDGET` | `2000` | Tokens reserved for the facts system block. |
 
 ---
 
-## What's next (Phase 1 — AI & Memory Core, 3–5 days)
+## What's next (Phase 2 — MATLAB Bridge, 6–8 days)
 
-Once `doc-agent ping` is green, the next phase adds:
+- `extract_slx.m` + `extract_sldd.m` → canonical JSON
+- Stateflow walker, library-link resolution
+- A2L / ARXML parsers on the Python side
+- Stable `id` + provenance on every entity (hedge for Phase 7 KG)
 
-- `AIClient` extended with retry, streaming, prompt caching, structured outputs
-- `ConversationMemory` — rolling chat history with token budgeting and pinning
-- `FactsMemory` — authoritative project knowledge, priority-ranked
-- `SessionStore` — lightweight key-value persistence
-- Token estimation (`tiktoken` for OpenAI parity + Claude estimator)
-
-Exit criterion: a CLI chat loop that respects the token budget, persists across runs, and surfaces pinned facts.
+Exit criterion: a real `.slx` + `.sldd` parsed into a fully validated canonical JSON.
 
 See [`../ROADMAP.md`](../ROADMAP.md) for the full multi-phase plan.
 
@@ -140,10 +153,14 @@ See [`../ROADMAP.md`](../ROADMAP.md) for the full multi-phase plan.
 
 **`doc-agent: command not found`** — your virtual environment isn't activated, or `pip install -e .` was run outside it. Re-activate (`source .venv/bin/activate`) and re-install.
 
-**`ANTHROPIC_API_KEY is not set`** — `.env` doesn't exist or doesn't contain a key. `cp .env.example .env`, then paste your key.
+**`ANTHROPIC_API_KEY is not set`** — `.env` doesn't exist or doesn't contain a key.
 
 **`Connection error` / `Timeout`** — check internet access; if behind a corporate proxy, set `HTTPS_PROXY` in your shell or `ANTHROPIC_BASE_URL` in `.env`.
 
 **`AuthenticationError`** — the key is set but wrong / revoked. Generate a new one in the Anthropic console.
 
-**Python version mismatch** — `python3 --version` must report 3.11 or higher. Use `pyenv` or your system package manager to install 3.11 if needed.
+**Memory file got corrupted** — delete `project_lib/conversation.json`; the next `doc-agent chat` will start fresh.
+
+**Facts not appearing in chat** — run `doc-agent facts reload` after editing `project_lib/facts.md` by hand, or check that `FACTS_TOKEN_BUDGET` isn't 0.
+
+**Python version mismatch** — `python3 --version` must be 3.11+. The Makefile auto-detects 3.13 / 3.12 / 3.11 / `python3`.

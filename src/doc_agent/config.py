@@ -3,7 +3,7 @@
 from pathlib import Path
 from typing import Literal
 
-from pydantic import Field
+from pydantic import Field, field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 # Repo root = two levels up from this file (src/doc_agent/config.py → repo root).
@@ -39,10 +39,48 @@ class Settings(BaseSettings):
         default="INFO", alias="LOG_LEVEL"
     )
 
+    # --- Data paths (project_lib by default — gitignored) -----------
+    data_dir: Path = Field(default=REPO_ROOT / "project_lib", alias="DATA_DIR")
+
+    # --- Memory budgets ---------------------------------------------
+    max_history: int = Field(default=12, alias="MAX_HISTORY", ge=1, le=200)
+    max_token_budget: int = Field(default=40000, alias="MAX_TOKEN_BUDGET", ge=1000)
+    response_token_budget: int = Field(
+        default=8000, alias="RESPONSE_TOKEN_BUDGET", ge=256
+    )
+    facts_token_budget: int = Field(default=2000, alias="FACTS_TOKEN_BUDGET", ge=0)
+
+    @field_validator("data_dir", mode="before")
+    @classmethod
+    def _expand_data_dir(cls, v):
+        """Expand ~ and resolve relative paths against the repo root."""
+        if v is None or v == "":
+            return REPO_ROOT / "project_lib"
+        p = Path(v).expanduser()
+        if not p.is_absolute():
+            p = (REPO_ROOT / p).resolve()
+        return p
+
     @property
     def has_api_key(self) -> bool:
         """True iff a non-empty API key is present."""
         return bool(self.anthropic_api_key.strip())
+
+    @property
+    def conversation_path(self) -> Path:
+        return self.data_dir / "conversation.json"
+
+    @property
+    def facts_path(self) -> Path:
+        return self.data_dir / "facts.md"
+
+    @property
+    def session_path(self) -> Path:
+        return self.data_dir / "session.json"
+
+    def ensure_data_dir(self) -> None:
+        """Create the data directory if it doesn't exist yet."""
+        self.data_dir.mkdir(parents=True, exist_ok=True)
 
 
 # Module-level singleton — import this rather than instantiating Settings yourself.

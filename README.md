@@ -2,7 +2,7 @@
 
 AI-powered documentation for Simulink control models.
 
-**Status**: Phase 1 — AI & Memory Core complete. See [`../ROADMAP.md`](../ROADMAP.md) for the full plan and [`../DOC_AGENT_BLUEPRINT.md`](../DOC_AGENT_BLUEPRINT.md) for the original v1 specification this rebuild is derived from.
+**Status**: Phase 3 — RAG & Knowledge complete. (Phase 2 — MATLAB Bridge — is parked until a test `.slx` is ready.) See [`../ROADMAP.md`](../ROADMAP.md) for the full plan and [`../DOC_AGENT_BLUEPRINT.md`](../DOC_AGENT_BLUEPRINT.md) for the original v1 specification this rebuild is derived from.
 
 ---
 
@@ -58,6 +58,30 @@ Inside the chat loop, type `/help` for in-session commands (`/clear`, `/pin <id>
 | `doc-agent facts reload` | Re-read `facts.md` after editing it by hand. |
 
 Categories: `naming`, `domain`, `policy`, `other`. Priorities: `critical`, `high`, `normal`, `low`. Facts are stored in `project_lib/facts.md` — human-editable.
+
+### RAG subcommands
+
+| Command | Purpose |
+|---|---|
+| `doc-agent rag add <file>` | Index a PDF, DOCX, Markdown, text, or code file. Re-adding replaces prior chunks. |
+| `doc-agent rag list` | Show all indexed sources with their chunk counts. |
+| `doc-agent rag remove <name>` | Delete every chunk for one source. |
+| `doc-agent rag search "<query>" [-k 5]` | Preview retrieval — no LLM call. |
+| `doc-agent rag stats` | Quick counts and storage path. |
+| `doc-agent rag clear` | Wipe the entire library (originals untouched). |
+
+Supported file types: `.pdf`, `.docx`, `.md`, `.txt`, `.rst`, `.py`, `.m`, `.c`, `.cpp`, `.h`, `.json`, `.xml`, `.yml`, `.yaml`, `.toml`, `.html`.
+
+Once you've indexed at least one document, `doc-agent chat` automatically retrieves the top-k most relevant chunks per turn and includes them in the system prompt with citations. Disable with `doc-agent chat --no-rag` or `RAG_ENABLED=0` in `.env`.
+
+Try it out:
+
+```bash
+doc-agent rag add examples/sample_signals_spec.md
+doc-agent rag search "What calibration controls the low-pass filter?"
+doc-agent chat
+# In chat: "Write a brief description of the VSE subsystem."
+```
 
 ---
 
@@ -133,6 +157,12 @@ make clean      # remove caches and the .venv
 | `MAX_TOKEN_BUDGET` | `40000` | Total input-side token budget. |
 | `RESPONSE_TOKEN_BUDGET` | `8000` | Tokens reserved for the model's reply. |
 | `FACTS_TOKEN_BUDGET` | `2000` | Tokens reserved for the facts system block. |
+| `RAG_ENABLED` | `1` | Set `0` to disable retrieval globally. |
+| `RAG_CHUNK_SIZE` | `800` | Target tokens per chunk. |
+| `RAG_CHUNK_OVERLAP` | `100` | Overlap between adjacent chunks (tokens). |
+| `RAG_TOP_K` | `5` | Chunks to retrieve per chat turn. |
+| `RAG_TOKEN_BUDGET` | `4000` | Max tokens of retrieved context injected. |
+| `RAG_MIN_SCORE` | `0.0` | Minimum cosine similarity to keep a chunk (0–1). |
 
 ---
 

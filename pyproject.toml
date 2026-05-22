@@ -1,6 +1,6 @@
 [project]
 name = "doc-agent"
-version = "0.2.0"
+version = "0.3.0"
 description = "AI-powered documentation for Simulink control models."
 readme = "README.md"
 requires-python = ">=3.11"
@@ -15,6 +15,10 @@ dependencies = [
     "python-dotenv>=1.0",
     "rich>=13.7",
     "typer>=0.12",
+    # --- Phase 3 — RAG ----------------------------------------------
+    "chromadb>=0.5",      # local persistent vector store + ONNX embedder
+    "pypdf>=4.0",         # PDF text extraction
+    "python-docx>=1.1",   # DOCX text extraction
 ]
 
 [project.optional-dependencies]

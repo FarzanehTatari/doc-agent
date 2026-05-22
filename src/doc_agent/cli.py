@@ -13,6 +13,7 @@ Subcommand groups:
 from __future__ import annotations
 
 import sys
+from pathlib import Path as _Path
 from typing import Optional
 
 import typer
@@ -35,8 +36,10 @@ app = typer.Typer(
 )
 memory_app = typer.Typer(help="Inspect and manage conversation memory.", no_args_is_help=True)
 facts_app = typer.Typer(help="Inspect and manage authoritative facts.", no_args_is_help=True)
+rag_app = typer.Typer(help="Manage the RAG document library.", no_args_is_help=True)
 app.add_typer(memory_app, name="memory")
 app.add_typer(facts_app, name="facts")
+app.add_typer(rag_app, name="rag")
 
 console = Console()
 
@@ -62,6 +65,19 @@ def _load_session() -> SessionStore:
     return SessionStore(settings.session_path)
 
 
+def _load_rag():
+    """Lazy import so users without chromadb installed can still run other commands."""
+    settings.ensure_data_dir()
+    from doc_agent.rag import RAGManager
+
+    return RAGManager(
+        store_path=settings.rag_dir,
+        collection_name=settings.rag_collection,
+        chunk_size=settings.rag_chunk_size,
+        chunk_overlap=settings.rag_chunk_overlap,
+    )
+
+
 def _ensure_key_or_exit() -> None:
     if settings.has_api_key:
         return
@@ -79,18 +95,22 @@ def _ensure_key_or_exit() -> None:
     raise typer.Exit(code=1)
 
 
-def _build_system_prompt(facts: FactsMemory) -> Optional[str]:
-    """Combine project facts into a system prompt block. None if no facts."""
-    block = facts.for_prompt(
-        max_facts=50, max_tokens=settings.facts_token_budget
-    )
-    if not block:
-        return None
+def _build_system_prompt(facts: FactsMemory, rag_block: str | None = None) -> Optional[str]:
+    """Combine project facts (always) + retrieved RAG chunks (when present)."""
+    facts_block = facts.for_prompt(max_facts=50, max_tokens=settings.facts_token_budget)
+    pieces: list[str] = []
     preamble = (
         "You are doc-agent, an assistant helping document Simulink control models. "
         "Be precise and concise; when uncertain about model details, say so."
     )
-    return f"{preamble}\n\n{block}"
+    pieces.append(preamble)
+    if facts_block:
+        pieces.append(facts_block)
+    if rag_block:
+        pieces.append(rag_block)
+    if len(pieces) == 1:
+        return None  # nothing project-specific to inject
+    return "\n\n".join(pieces)
 
 
 # ---- top-level commands ------------------------------------------------------
@@ -136,6 +156,7 @@ def ping() -> None:
 def chat(
     new: bool = typer.Option(False, "--new", help="Start a fresh session (clears non-pinned history)."),
     no_facts: bool = typer.Option(False, "--no-facts", help="Don't include facts in the system prompt."),
+    no_rag: bool = typer.Option(False, "--no-rag", help="Don't retrieve from the RAG library."),
     no_stream: bool = typer.Option(False, "--no-stream", help="Disable streaming (wait for full reply)."),
     max_tokens: int = typer.Option(
         2048, "--max-tokens", help="Max output tokens per turn.", min=64, max=64000
@@ -143,22 +164,32 @@ def chat(
 ) -> None:
     """Interactive chat loop. History persists across runs.
 
-    Type `/help` inside the loop for in-session commands.
+    On each turn, project facts plus relevant RAG chunks are prepended to the
+    system prompt. Type `/help` inside the loop for in-session commands.
     Exit with `/exit`, Ctrl-D, or Ctrl-C.
     """
     _ensure_key_or_exit()
     mem = _load_memory()
     facts = _load_facts()
 
+    rag = None
+    if settings.rag_enabled and not no_rag:
+        try:
+            rag = _load_rag()
+            rag_stats = rag.stats()
+            if rag_stats["chunks"] == 0:
+                rag = None  # empty library — skip retrieval calls
+        except Exception as e:  # noqa: BLE001
+            console.print(f"[dim yellow]RAG disabled: {e}[/dim yellow]")
+            rag = None
+
     if new:
         removed = mem.clear(keep_pinned=True)
         mem.save()
         console.print(f"[dim]Cleared {removed} non-pinned messages.[/dim]")
 
-    system = None if no_facts else _build_system_prompt(facts)
     client = AIClient()
-
-    _print_chat_header(client.model, mem, facts, system_enabled=system is not None)
+    _print_chat_header(client.model, mem, facts, rag=rag, facts_enabled=not no_facts)
 
     while True:
         try:
@@ -179,13 +210,39 @@ def chat(
                 break
             continue
 
+        # Build a fresh system prompt per turn — RAG context is query-specific.
+        rag_block = None
+        rag_results = []
+        if rag is not None:
+            try:
+                rag_results = rag.search(
+                    user_text, top_k=settings.rag_top_k, min_score=settings.rag_min_score
+                )
+                if rag_results:
+                    rag_block = rag.format_for_prompt(
+                        user_text,
+                        top_k=settings.rag_top_k,
+                        min_score=settings.rag_min_score,
+                        max_tokens=settings.rag_token_budget,
+                    )
+            except Exception as e:  # noqa: BLE001
+                console.print(f"[dim yellow]RAG search failed: {e}[/dim yellow]")
+
+        system = None if no_facts and not rag_block else _build_system_prompt(
+            facts if not no_facts else FactsMemory(settings.facts_path.with_suffix(".empty.md")),
+            rag_block=rag_block,
+        )
+
         # Append the user turn
         mem.add("user", user_text)
         recent = mem.recent()
-        # Sanity: the API requires non-empty user-led message arrays
         if not recent or recent[0].get("role") != "user":
             console.print("[red]Internal: nothing to send (memory empty after trim).[/red]")
             continue
+
+        if rag_results:
+            cites = ", ".join(r.citation for r in rag_results)
+            console.print(f"[dim]retrieved {len(rag_results)} chunk(s): {cites}[/dim]")
 
         console.print("[bold cyan]assistant >[/bold cyan] ", end="")
         if no_stream:
@@ -200,7 +257,7 @@ def chat(
                 sys.stdout.flush()
 
             result = client.chat_stream(recent, on_text=_emit, system=system, max_tokens=max_tokens)
-            console.print()  # newline after the stream
+            console.print()
             if not result.ok:
                 console.print(f"[red]Stream error:[/red] {result.error}")
                 continue
@@ -208,7 +265,7 @@ def chat(
         mem.add("assistant", result.text)
         mem.save()
 
-        # tiny usage tag for the curious
+        # tiny usage tag
         u = (
             f"[dim](in {format_tokens(result.input_tokens)}  "
             f"out {format_tokens(result.output_tokens)}  "
@@ -351,19 +408,133 @@ def facts_reload() -> None:
     console.print(f"Reloaded [bold]{n}[/bold] fact(s) from {settings.facts_path}")
 
 
+# ---- rag subcommands --------------------------------------------------------
+@rag_app.command("add")
+def rag_add(
+    path: str = typer.Argument(..., help="Path to a file: PDF, DOCX, Markdown, text, or code."),
+) -> None:
+    """Chunk a file and index it. Re-adding the same filename replaces prior chunks."""
+    rag = _load_rag()
+    p = _Path(path)
+    if not p.exists():
+        console.print(f"[red]No such file:[/red] {path}")
+        raise typer.Exit(code=1)
+    try:
+        out = rag.add_document(p, progress=lambda m: console.print(f"[dim]{m}[/dim]"))
+    except Exception as e:  # noqa: BLE001
+        console.print(f"[red]Error:[/red] {e}")
+        raise typer.Exit(code=1) from e
+    verb = "Replaced" if out["replaced"] else "Indexed"
+    console.print(f"[green]{verb}[/green] [bold]{out['source']}[/bold] → {out['chunks']} chunks")
+
+
+@rag_app.command("list")
+def rag_list() -> None:
+    """List indexed documents with their chunk counts."""
+    rag = _load_rag()
+    sources = rag.list_documents()
+    if not sources:
+        console.print("[dim]No documents indexed. Try `doc-agent rag add <file>`.[/dim]")
+        return
+    table = Table(show_header=True, header_style="bold")
+    table.add_column("Source", no_wrap=False)
+    table.add_column("Chunks", justify="right")
+    for name, n in sorted(sources.items()):
+        table.add_row(name, str(n))
+    console.print(table)
+    s = rag.stats()
+    console.print(
+        f"[dim]Total:[/dim] {s['sources']} docs · {s['chunks']} chunks  "
+        f"[dim]Store:[/dim] {s['path']}"
+    )
+
+
+@rag_app.command("remove")
+def rag_remove(source: str = typer.Argument(..., help="Source filename (as shown in `rag list`).")) -> None:
+    """Remove every chunk from a given source."""
+    rag = _load_rag()
+    n = rag.remove_document(source)
+    if n == 0:
+        console.print(f"[red]No chunks found for source:[/red] {source}")
+        raise typer.Exit(code=1)
+    console.print(f"Removed [bold]{n}[/bold] chunk(s) for {source}.")
+
+
+@rag_app.command("search")
+def rag_search(
+    query: str = typer.Argument(..., help="Search query."),
+    top_k: int = typer.Option(5, "--top-k", "-k", min=1, max=50),
+    min_score: float = typer.Option(0.0, "--min-score", min=0.0, max=1.0),
+) -> None:
+    """Retrieve the top-k most similar chunks. No LLM call — pure retrieval."""
+    rag = _load_rag()
+    results = rag.search(query, top_k=top_k, min_score=min_score)
+    if not results:
+        console.print("[dim]No matches above the score threshold.[/dim]")
+        return
+    for i, r in enumerate(results, start=1):
+        console.rule(f"#{i}  [yellow]{r.citation}[/yellow]  [dim](score {r.score:.3f})[/dim]")
+        preview = r.text if len(r.text) <= 800 else r.text[:800].rstrip() + "…"
+        console.print(preview)
+
+
+@rag_app.command("stats")
+def rag_stats() -> None:
+    """Show counts and storage path."""
+    rag = _load_rag()
+    s = rag.stats()
+    table = Table.grid(padding=(0, 2))
+    table.add_column(style="dim", justify="right")
+    table.add_column()
+    table.add_row("Sources", str(s["sources"]))
+    table.add_row("Chunks", str(s["chunks"]))
+    table.add_row("Collection", s["collection"])
+    table.add_row("Path", s["path"])
+    console.print(table)
+
+
+@rag_app.command("clear")
+def rag_clear(
+    yes: bool = typer.Option(False, "--yes", "-y", help="Skip confirmation."),
+) -> None:
+    """Wipe the entire RAG library. Irreversible — uploaded files are NOT deleted."""
+    rag = _load_rag()
+    if not yes:
+        confirm = typer.confirm("Drop ALL indexed chunks? Your original files are not touched.")
+        if not confirm:
+            console.print("[dim]aborted[/dim]")
+            raise typer.Exit(code=0)
+    rag.clear()
+    console.print("[green]Cleared.[/green]")
+
+
 # ---- chat-loop helpers -------------------------------------------------------
 def _prompt_user() -> str:
     console.print("[bold green]you >[/bold green] ", end="")
     return input()
 
 
-def _print_chat_header(model: str, mem: ConversationMemory, facts: FactsMemory, *, system_enabled: bool) -> None:
+def _print_chat_header(
+    model: str,
+    mem: ConversationMemory,
+    facts: FactsMemory,
+    *,
+    rag=None,
+    facts_enabled: bool = True,
+) -> None:
     s = mem.stats()
     facts_count = facts.stats()["enabled"]
+    rag_part = ""
+    if rag is not None:
+        rag_stats = rag.stats()
+        rag_part = f", rag: {rag_stats['sources']} docs / {rag_stats['chunks']} chunks"
+    else:
+        rag_part = ", rag: disabled"
     parts = [
         f"[bold]doc-agent chat[/bold]  [dim]· {model} ·[/dim]",
         f"[dim]history: {s['messages']} msg ({format_tokens(s['tokens_total'])} tok),"
-        f" pinned: {s['pinned']}, facts: {facts_count}{' (active)' if system_enabled else ' (disabled)'}.[/dim]",
+        f" pinned: {s['pinned']}, facts: {facts_count}{' (active)' if facts_enabled else ' (disabled)'}"
+        f"{rag_part}.[/dim]",
         "[dim]/help for commands · /exit or Ctrl-D to quit[/dim]",
     ]
     console.print(Panel("\n".join(parts), border_style="cyan"))
@@ -428,6 +599,27 @@ def _handle_slash_command(line: str, mem: ConversationMemory, facts: FactsMemory
             f"tokens: {format_tokens(s['tokens_total'])} / {format_tokens(s['tokens_budget'])}"
         )
         return False
+    if cmd == "rag":
+        # /rag                — show stats
+        # /rag <query>        — preview retrieval (no LLM)
+        try:
+            rag = _load_rag()
+        except Exception as e:  # noqa: BLE001
+            console.print(f"[red]RAG unavailable:[/red] {e}")
+            return False
+        if not arg.strip():
+            s = rag.stats()
+            console.print(f"[dim]sources: {s['sources']}  chunks: {s['chunks']}[/dim]")
+            return False
+        results = rag.search(arg, top_k=settings.rag_top_k, min_score=settings.rag_min_score)
+        if not results:
+            console.print("[dim]no matches[/dim]")
+            return False
+        for i, r in enumerate(results, start=1):
+            console.print(f"[yellow]#{i} {r.citation}[/yellow] [dim](score {r.score:.2f})[/dim]")
+            preview = r.text if len(r.text) <= 240 else r.text[:240].rstrip() + "…"
+            console.print(f"  {preview}\n")
+        return False
     console.print(f"[red]unknown command:[/red] /{cmd}  (try /help)")
     return False
 
@@ -442,6 +634,7 @@ _HELP_TEXT = """
 - `/unpin <id>` — unpin a message
 - `/history [N]` — show the last N messages with their ids (default 5)
 - `/facts` — show the active facts block
+- `/rag [query]` — show RAG stats, or preview retrieval for a query (no LLM call)
 - `/stats` — current memory / token stats
 """
 

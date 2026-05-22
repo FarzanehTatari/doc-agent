@@ -50,6 +50,15 @@ class Settings(BaseSettings):
     )
     facts_token_budget: int = Field(default=2000, alias="FACTS_TOKEN_BUDGET", ge=0)
 
+    # --- RAG --------------------------------------------------------
+    rag_enabled: bool = Field(default=True, alias="RAG_ENABLED")
+    rag_chunk_size: int = Field(default=800, alias="RAG_CHUNK_SIZE", ge=100, le=8000)
+    rag_chunk_overlap: int = Field(default=100, alias="RAG_CHUNK_OVERLAP", ge=0, le=2000)
+    rag_top_k: int = Field(default=5, alias="RAG_TOP_K", ge=1, le=50)
+    rag_token_budget: int = Field(default=4000, alias="RAG_TOKEN_BUDGET", ge=0)
+    rag_min_score: float = Field(default=0.0, alias="RAG_MIN_SCORE", ge=0.0, le=1.0)
+    rag_collection: str = Field(default="doc_agent_rag", alias="RAG_COLLECTION")
+
     @field_validator("data_dir", mode="before")
     @classmethod
     def _expand_data_dir(cls, v):
@@ -77,6 +86,10 @@ class Settings(BaseSettings):
     @property
     def session_path(self) -> Path:
         return self.data_dir / "session.json"
+
+    @property
+    def rag_dir(self) -> Path:
+        return self.data_dir / "rag"
 
     def ensure_data_dir(self) -> None:
         """Create the data directory if it doesn't exist yet."""

@@ -556,6 +556,122 @@ def extract(
     console.print(table)
 
 
+@app.command()
+def generate(
+    extracted_json: str = typer.Argument(
+        ..., help="Path to canonical JSON from `doc-agent extract`."
+    ),
+    subsystem: str = typer.Option(
+        None, "--subsystem", "-s",
+        help="Subsystem path. Default: first one in the model.",
+    ),
+    kind: str = typer.Option("autodoc", "--kind", "-k", help="autodoc | sysreq | unitreq"),
+    out: str = typer.Option(None, "--out", "-o", help="Output Markdown path."),
+    no_rag: bool = typer.Option(False, "--no-rag"),
+    no_facts: bool = typer.Option(False, "--no-facts"),
+    verbose: bool = typer.Option(False, "--verbose", "-v",
+                                  help="Print tool calls as they happen."),
+    max_tokens: int = typer.Option(4096, "--max-tokens", min=256, max=64000),
+) -> None:
+    """Generate documentation for one subsystem from extracted canonical JSON."""
+    _ensure_key_or_exit()
+
+    p = _Path(extracted_json)
+    if not p.exists():
+        console.print(f"[red]No such file:[/red] {extracted_json}")
+        raise typer.Exit(code=1)
+
+    from doc_agent.extract import MatlabBridge
+    from doc_agent.generate import generate_for_subsystem
+    from doc_agent.generate import get as get_deliverable
+
+    try:
+        canonical = MatlabBridge.load_canonical(p)
+    except Exception as e:  # noqa: BLE001
+        console.print(f"[red]Invalid canonical JSON:[/red] {e}")
+        raise typer.Exit(code=1) from e
+
+    if not canonical.subsystems:
+        console.print(f"[red]No subsystems in {extracted_json}[/red]")
+        raise typer.Exit(code=1)
+
+    if subsystem is None:
+        subsystem = canonical.subsystems[0].path
+        console.print(
+            f"[dim]Target:[/dim] [bold]{subsystem}[/bold] "
+            f"[dim](first subsystem; use --subsystem to override)[/dim]"
+        )
+
+    try:
+        deliverable = get_deliverable(kind)
+    except ValueError as e:
+        console.print(f"[red]{e}[/red]")
+        raise typer.Exit(code=1) from e
+
+    # RAG is optional — skip if no library indexed
+    rag = None
+    if not no_rag:
+        try:
+            r = _load_rag()
+            if r.stats()["chunks"] > 0:
+                rag = r
+        except Exception:  # noqa: BLE001
+            rag = None
+
+    facts = None if no_facts else _load_facts()
+    client = AIClient()
+
+    console.print(
+        f"[dim]Generating[/dim] [bold]{deliverable.title}[/bold] "
+        f"[dim]for[/dim] [bold]{subsystem}[/bold] "
+        f"[dim]using[/dim] [bold]{client.model}[/bold]"
+    )
+
+    on_tool = None
+    if verbose:
+        def on_tool(name, inp):
+            inp_preview = ", ".join(f"{k}={v!r}" for k, v in (inp or {}).items())
+            console.print(f"  [dim]→ tool:[/dim] [cyan]{name}[/cyan]({inp_preview})")
+
+    try:
+        doc = generate_for_subsystem(
+            client=client,
+            canonical=canonical,
+            subsystem_path=subsystem,
+            deliverable=deliverable,
+            rag=rag,
+            facts=facts,
+            max_tokens=max_tokens,
+            on_tool=on_tool,
+        )
+    except Exception as e:  # noqa: BLE001
+        console.print(f"[red]Generation failed:[/red] {e}")
+        raise typer.Exit(code=1) from e
+
+    if doc.error:
+        console.print(f"[yellow]Note:[/yellow] {doc.error}")
+
+    settings.ensure_data_dir()
+    out_dir = settings.data_dir / "generated"
+    out_dir.mkdir(parents=True, exist_ok=True)
+    safe_path = subsystem.replace("/", "_")
+    out_path = _Path(out) if out else out_dir / f"{p.stem}_{safe_path}_{deliverable.kind}.md"
+    out_path.write_text(doc.to_markdown(), encoding="utf-8")
+
+    table = Table.grid(padding=(0, 2))
+    table.add_column(style="dim", justify="right")
+    table.add_column()
+    table.add_row("Subsystem", subsystem)
+    table.add_row("Deliverable", deliverable.title)
+    table.add_row("Iterations", str(doc.iterations))
+    table.add_row("Tool calls", str(doc.tool_calls_made))
+    table.add_row("Tokens", f"in {format_tokens(doc.input_tokens)}  out {format_tokens(doc.output_tokens)}")
+    if doc.citations:
+        table.add_row("Citations", ", ".join(doc.citations))
+    table.add_row("Output", str(out_path))
+    console.print(table)
+
+
 @app.command("build-test-model")
 def build_test_model(
     out_dir: str = typer.Option(

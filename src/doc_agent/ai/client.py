@@ -218,6 +218,38 @@ class AIClient:
                 error=f"{type(e).__name__}: {e}",
             )
 
+    # ----- chat with tools (Phase 4) --------------------------------------
+    def chat_with_tools(
+        self,
+        messages: list[dict],
+        tools: list[dict],
+        *,
+        system: str | None = None,
+        max_tokens: int = 4096,
+        temperature: float | None = None,
+        model: str | None = None,
+    ):
+        """Call Messages API with tools registered. Returns the raw response.
+
+        Unlike `chat()`, this returns the SDK response object directly so
+        callers can inspect `stop_reason`, iterate content blocks for
+        `tool_use` vs `text`, and read `usage`. Phase 4's agent loop uses
+        this in a `while` until the model emits `end_turn`.
+        """
+        kwargs: dict = {
+            "model": model or self.model,
+            "max_tokens": max_tokens,
+            "messages": messages,
+            "tools": tools,
+        }
+        if system:
+            kwargs["system"] = system
+        if temperature is not None:
+            kwargs["temperature"] = temperature
+        return self._with_retry(
+            lambda: self._client.messages.create(**kwargs), what="chat_with_tools"
+        )
+
     # ----- chat (streaming) ------------------------------------------------
     def chat_stream(
         self,

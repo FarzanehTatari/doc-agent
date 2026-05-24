@@ -2,7 +2,7 @@
 
 AI-powered documentation for Simulink control models.
 
-**Status**: Phases 0–3 complete (Phase 2 Slices 1 + 2 done). `.slx` + `.sldd` → fully populated canonical JSON, with Stateflow walking, calibration values/units/limits, and signal metadata. Phase 4 (generation pipeline) is next. See [`../ROADMAP.md`](../ROADMAP.md) for the full plan and [`../DOC_AGENT_BLUEPRINT.md`](../DOC_AGENT_BLUEPRINT.md) for the original v1 specification this rebuild is derived from.
+**Status**: Phases 0–4 (Slice 1) complete. The tool-using agent can read the canonical JSON via tools, search the RAG library, honor facts, and produce Design Docs / System Requirements / Unit Requirements for any subsystem. See [`../ROADMAP.md`](../ROADMAP.md) for the full plan and [`../DOC_AGENT_BLUEPRINT.md`](../DOC_AGENT_BLUEPRINT.md) for the original v1 spec.
 
 ---
 
@@ -58,6 +58,27 @@ Inside the chat loop, type `/help` for in-session commands (`/clear`, `/pin <id>
 | `doc-agent facts reload` | Re-read `facts.md` after editing it by hand. |
 
 Categories: `naming`, `domain`, `policy`, `other`. Priorities: `critical`, `high`, `normal`, `low`. Facts are stored in `project_lib/facts.md` — human-editable.
+
+### Generate documentation (Phase 4)
+
+| Command | Purpose |
+|---|---|
+| `doc-agent generate <json> [-s <path>] [-k autodoc|sysreq|unitreq]` | Run the tool-using agent on canonical JSON; produces Markdown. |
+
+The agent loop:
+
+1. Loads facts + (optionally) RAG context for the model.
+2. Calls the LLM with tools registered (`get_subsystem`, `lookup_calibration`, `search_rag`, etc.).
+3. Iterates — the model calls tools, we run them, results go back — until the model emits a complete answer.
+4. Writes Markdown to `project_lib/generated/<model>_<subsystem>_<kind>.md`.
+
+End-to-end check (assumes you've already run `doc-agent extract`):
+
+```bash
+doc-agent generate project_lib/extracted/VSEModel.json -s VSEModel/LowPassFilter -k autodoc -v
+```
+
+The `-v` flag prints every tool call as it happens so you can watch the model's reasoning.
 
 ### MATLAB extraction (Phase 2)
 

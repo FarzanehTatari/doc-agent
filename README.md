@@ -2,7 +2,7 @@
 
 AI-powered documentation for Simulink control models.
 
-**Status**: Phase 3 — RAG & Knowledge complete. (Phase 2 — MATLAB Bridge — is parked until a test `.slx` is ready.) See [`../ROADMAP.md`](../ROADMAP.md) for the full plan and [`../DOC_AGENT_BLUEPRINT.md`](../DOC_AGENT_BLUEPRINT.md) for the original v1 specification this rebuild is derived from.
+**Status**: Phase 2 (Slice 1) + Phase 3 complete. `.slx` → canonical JSON works end-to-end with a toy fixture. See [`../ROADMAP.md`](../ROADMAP.md) for the full plan and [`../DOC_AGENT_BLUEPRINT.md`](../DOC_AGENT_BLUEPRINT.md) for the original v1 specification this rebuild is derived from.
 
 ---
 
@@ -58,6 +58,32 @@ Inside the chat loop, type `/help` for in-session commands (`/clear`, `/pin <id>
 | `doc-agent facts reload` | Re-read `facts.md` after editing it by hand. |
 
 Categories: `naming`, `domain`, `policy`, `other`. Priorities: `critical`, `high`, `normal`, `low`. Facts are stored in `project_lib/facts.md` — human-editable.
+
+### MATLAB extraction (Phase 2)
+
+| Command | Purpose |
+|---|---|
+| `doc-agent build-test-model [-d <dir>]` | Generate the toy `VSEModel.slx + .sldd` fixture (needs MATLAB). |
+| `doc-agent extract <slx_path> [-o <json>]` | Run `matlab/extract_slx.m` and validate the canonical JSON. |
+
+Both shell out to a headless `matlab -batch ...` call. MATLAB is auto-detected on `PATH` or in `/Applications/MATLAB_R*.app/bin/`; override with `MATLAB_EXECUTABLE` in `.env`.
+
+End-to-end check:
+
+```bash
+doc-agent build-test-model               # writes examples/test_model/VSEModel.{slx,sldd}
+doc-agent extract examples/test_model/VSEModel.slx
+# Output:
+#   Model        VSEModel
+#   Schema       1
+#   Subsystems   3
+#   Signals      5
+#   Block types  Gain, Saturate, Sum, TransferFcn
+#   Data dict    VSEModel.sldd
+#   Output       project_lib/extracted/VSEModel.json
+```
+
+The resulting JSON validates against `src/doc_agent/extract/schema.py:CanonicalModel`. Phase 4 will feed it to the LLM via tools.
 
 ### RAG subcommands
 

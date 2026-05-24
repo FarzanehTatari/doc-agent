@@ -1,6 +1,6 @@
 [project]
 name = "doc-agent"
-version = "0.3.0"
+version = "0.4.0"
 description = "AI-powered documentation for Simulink control models."
 readme = "README.md"
 requires-python = ">=3.11"

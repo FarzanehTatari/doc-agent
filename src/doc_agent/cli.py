@@ -508,6 +508,78 @@ def rag_clear(
     console.print("[green]Cleared.[/green]")
 
 
+# ---- extract command (Phase 2 — MATLAB bridge) -----------------------------
+@app.command()
+def extract(
+    slx_path: str = typer.Argument(..., help="Path to a .slx file."),
+    out: str = typer.Option(
+        None, "--out", "-o",
+        help="Output JSON path. Defaults to data_dir/extracted/<modelname>.json.",
+    ),
+) -> None:
+    """Run MATLAB extractor on a .slx and validate the JSON output."""
+    p = _Path(slx_path)
+    if not p.exists():
+        console.print(f"[red]No such file:[/red] {slx_path}")
+        raise typer.Exit(code=1)
+
+    settings.ensure_data_dir()
+    settings.extracted_dir.mkdir(parents=True, exist_ok=True)
+    out_path = _Path(out) if out else settings.extracted_dir / f"{p.stem}.json"
+
+    try:
+        from doc_agent.extract import MatlabBridge
+    except Exception as e:  # noqa: BLE001
+        console.print(f"[red]Cannot import extract module:[/red] {e}")
+        raise typer.Exit(code=1) from e
+
+    try:
+        bridge = MatlabBridge()
+        console.print(f"[dim]MATLAB:[/dim] {bridge.matlab}")
+        console.print(f"[dim]Running extract_slx → {out_path}[/dim]")
+        model = bridge.extract_slx(p, out_path)
+    except Exception as e:  # noqa: BLE001
+        console.print(f"[red]Extraction failed:[/red] {e}")
+        raise typer.Exit(code=1) from e
+
+    table = Table.grid(padding=(0, 2))
+    table.add_column(style="dim", justify="right")
+    table.add_column()
+    table.add_row("Model", model.model.name)
+    table.add_row("Schema", str(model.schema_version))
+    table.add_row("Subsystems", str(len(model.subsystems)))
+    table.add_row("Signals", str(len(model.signals)))
+    table.add_row("Block types", ", ".join(sorted(model.all_block_types())) or "(none)")
+    if model.data_dictionary:
+        table.add_row("Data dict", model.data_dictionary.name)
+    table.add_row("Output", str(out_path))
+    console.print(table)
+
+
+@app.command("build-test-model")
+def build_test_model(
+    out_dir: str = typer.Option(
+        None, "--out-dir", "-d",
+        help="Where to write VSEModel.slx + .sldd. Default: examples/test_model/",
+    ),
+) -> None:
+    """Generate the toy VSE Simulink model + data dictionary (calls MATLAB)."""
+    settings.ensure_data_dir()
+    target = _Path(out_dir) if out_dir else _Path.cwd() / "examples" / "test_model"
+    target.mkdir(parents=True, exist_ok=True)
+    try:
+        from doc_agent.extract import MatlabBridge
+        bridge = MatlabBridge()
+        console.print(f"[dim]MATLAB:[/dim] {bridge.matlab}")
+        slx, sldd = bridge.build_test_model(target)
+    except Exception as e:  # noqa: BLE001
+        console.print(f"[red]Build failed:[/red] {e}")
+        raise typer.Exit(code=1) from e
+    console.print(f"[green]✓[/green] {slx}")
+    console.print(f"[green]✓[/green] {sldd}")
+    console.print(f"\nNext: [bold]doc-agent extract {slx}[/bold]")
+
+
 # ---- chat-loop helpers -------------------------------------------------------
 def _prompt_user() -> str:
     console.print("[bold green]you >[/bold green] ", end="")

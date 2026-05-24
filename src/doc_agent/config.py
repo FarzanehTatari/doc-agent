@@ -59,6 +59,10 @@ class Settings(BaseSettings):
     rag_min_score: float = Field(default=0.0, alias="RAG_MIN_SCORE", ge=0.0, le=1.0)
     rag_collection: str = Field(default="doc_agent_rag", alias="RAG_COLLECTION")
 
+    # --- MATLAB bridge (Phase 2) -----------------------------------
+    matlab_executable: str = Field(default="", alias="MATLAB_EXECUTABLE")
+    matlab_timeout_s: int = Field(default=300, alias="MATLAB_TIMEOUT_S", ge=10, le=3600)
+
     @field_validator("data_dir", mode="before")
     @classmethod
     def _expand_data_dir(cls, v):
@@ -90,6 +94,14 @@ class Settings(BaseSettings):
     @property
     def rag_dir(self) -> Path:
         return self.data_dir / "rag"
+
+    @property
+    def extracted_dir(self) -> Path:
+        return self.data_dir / "extracted"
+
+    @property
+    def matlab_scripts_dir(self) -> Path:
+        return REPO_ROOT / "matlab"
 
     def ensure_data_dir(self) -> None:
         """Create the data directory if it doesn't exist yet."""

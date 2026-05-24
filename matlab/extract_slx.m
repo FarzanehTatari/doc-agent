@@ -352,10 +352,18 @@ for i = 1:numel(states)
     st = states(i);
     try; nm = char(st.Name); catch; nm = ''; end
     try; pth = char(st.Path); catch; pth = nm; end
+
+    % Atomic = state without substates. IsSubchart returns a logical, not 'on'/'off'.
+    isSub = false;
+    try
+        isSub = logical(st.IsSubchart);
+    catch
+    end
+
     n = numel(s_arr) + 1;
     s_arr(n).id        = stableId('sfstate', pth);
     s_arr(n).name      = nm;
-    s_arr(n).is_atomic = strcmpi(sfSafeProp(st, 'IsSubchart', 'off'), 'off');  % atomic = not a subchart container
+    s_arr(n).is_atomic = ~isSub;
     actions = struct( ...
         'entry',  char(sfSafeProp(st, 'EntryAction',  '')), ...
         'during', char(sfSafeProp(st, 'DuringAction', '')), ...

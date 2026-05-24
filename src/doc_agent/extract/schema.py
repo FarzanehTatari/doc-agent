@@ -103,12 +103,40 @@ class DataDictionary(BaseModel):
     signals: list[DataDictionarySignal] = Field(default_factory=list)
 
 
+class StateflowState(BaseModel):
+    """One state in a Stateflow chart (any depth)."""
+
+    id: str = ""
+    name: str
+    is_atomic: bool = False
+    # Common action types: entry / during / exit. Stored as { kind: code }.
+    actions: dict[str, str] = Field(default_factory=dict)
+
+
+class StateflowTransition(BaseModel):
+    """One transition between states (or from/to a junction)."""
+
+    id: str = ""
+    source: str = ""
+    destination: str = ""
+    condition: str = ""
+    action: str = ""
+
+
 class Stateflow(BaseModel):
-    """Placeholder for Stateflow charts — full extraction lands in Slice 2."""
+    """A Stateflow chart embedded in the model.
+
+    States and transitions are flat lists — hierarchy is reconstructable
+    from state paths if needed.
+    """
+
+    model_config = ConfigDict(extra="ignore")
 
     id: str = ""
     name: str = ""
     path: str = ""
+    states: list[StateflowState] = Field(default_factory=list)
+    transitions: list[StateflowTransition] = Field(default_factory=list)
     provenance: Provenance = Field(default_factory=Provenance)
 
 

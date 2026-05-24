@@ -18,6 +18,8 @@ from doc_agent.extract.schema import (
     Provenance,
     Signal,
     Stateflow,
+    StateflowState,
+    StateflowTransition,
     Subsystem,
 )
 
@@ -33,5 +35,7 @@ __all__ = [
     "Provenance",
     "Signal",
     "Stateflow",
+    "StateflowState",
+    "StateflowTransition",
     "Subsystem",
 ]

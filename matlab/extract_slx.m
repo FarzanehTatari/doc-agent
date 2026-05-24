@@ -49,10 +49,10 @@ data.subsystems = walkSubsystems(modelName, modelName, 0, '', opts);
 % --- Top-level signal connectivity -----------------------------------
 data.signals = walkLines(modelName);
 
-% --- Stateflow placeholder -------------------------------------------
-data.stateflow = struct([]);
+% --- Stateflow walker ------------------------------------------------
+data.stateflow = walkStateflow(modelName);
 
-% --- Data dictionary reference (full extraction in extract_sldd.m) ----
+% --- Data dictionary — call extract_sldd.m for any linked .sldd ------
 ddName = '';
 try
     ddName = get_param(modelName, 'DataDictionary');
@@ -61,9 +61,32 @@ end
 if isempty(ddName)
     data.data_dictionary = [];   % serialized as null
 else
-    data.data_dictionary = struct( ...
-        'name', ddName, 'path', ddName, ...
-        'calibrations', struct([]), 'signals', struct([]));
+    % Resolve to a full path. Simulink stores just the basename when the
+    % dictionary is on the path; we need an absolute path for extract_sldd.
+    ddFull = '';
+    cand1 = which(ddName);
+    if ~isempty(cand1) && isfile(cand1)
+        ddFull = cand1;
+    elseif isfile(fullfile(slxFolder, ddName))
+        ddFull = fullfile(slxFolder, ddName);
+    end
+
+    if isempty(ddFull)
+        % Couldn't locate the .sldd — keep the reference only.
+        data.data_dictionary = struct( ...
+            'name', ddName, 'path', ddName, ...
+            'calibrations', {{}}, 'signals', {{}});
+    else
+        try
+            data.data_dictionary = extract_sldd(ddFull);
+        catch ME
+            warning('extract_slx:DDFailed', ...
+                    'extract_sldd failed for %s: %s', ddName, ME.message);
+            data.data_dictionary = struct( ...
+                'name', ddName, 'path', ddFull, ...
+                'calibrations', {{}}, 'signals', {{}});
+        end
+    end
 end
 
 % --- Serialize -------------------------------------------------------
@@ -275,6 +298,120 @@ end
 
 
 % =====================================================================
+% Stateflow charts in this model. Returns a flat list of chart structs.
+% If Stateflow isn't installed, or the model has no charts, returns [].
+% =====================================================================
+function out = walkStateflow(modelName)
+out = struct('id', {}, 'name', {}, 'path', {}, 'states', {}, ...
+             'transitions', {}, 'provenance', {});
+
+% sfroot is provided by Stateflow — silently bail if not installed
+try
+    root = sfroot();
+catch
+    return;
+end
+
+try
+    charts = root.find('-isa', 'Stateflow.Chart');
+catch
+    return;
+end
+
+mPath = bdroot(modelName);
+for i = 1:numel(charts)
+    c = charts(i);
+    chartPath = '';
+    try
+        chartPath = char(c.Path);
+    catch
+    end
+    if isempty(chartPath); continue; end
+    % Only charts belonging to *our* model
+    if ~startsWith(chartPath, mPath); continue; end
+
+    n = numel(out) + 1;
+    out(n).id          = stableId('stateflow', chartPath);
+    try; out(n).name = char(c.Name); catch; out(n).name = ''; end
+    out(n).path        = chartPath;
+    out(n).states      = walkStates(c);
+    out(n).transitions = walkTransitions(c);
+    out(n).provenance  = struct('source', modelName, 'element', chartPath, 'version', '');
+end
+end
+
+
+function s_arr = walkStates(chart)
+s_arr = struct('id', {}, 'name', {}, 'is_atomic', {}, 'actions', {});
+try
+    states = chart.find('-isa', 'Stateflow.State');
+catch
+    return;
+end
+for i = 1:numel(states)
+    st = states(i);
+    try; nm = char(st.Name); catch; nm = ''; end
+    try; pth = char(st.Path); catch; pth = nm; end
+    n = numel(s_arr) + 1;
+    s_arr(n).id        = stableId('sfstate', pth);
+    s_arr(n).name      = nm;
+    s_arr(n).is_atomic = strcmpi(sfSafeProp(st, 'IsSubchart', 'off'), 'off');  % atomic = not a subchart container
+    actions = struct( ...
+        'entry',  char(sfSafeProp(st, 'EntryAction',  '')), ...
+        'during', char(sfSafeProp(st, 'DuringAction', '')), ...
+        'exit',   char(sfSafeProp(st, 'ExitAction',   '')) ...
+    );
+    s_arr(n).actions = actions;
+end
+end
+
+
+function t_arr = walkTransitions(chart)
+t_arr = struct('id', {}, 'source', {}, 'destination', {}, ...
+               'condition', {}, 'action', {});
+try
+    trans = chart.find('-isa', 'Stateflow.Transition');
+catch
+    return;
+end
+for i = 1:numel(trans)
+    t = trans(i);
+    srcName = '';
+    dstName = '';
+    try
+        if ~isempty(t.Source); srcName = char(t.Source.Name); end
+    catch
+    end
+    try
+        if ~isempty(t.Destination); dstName = char(t.Destination.Name); end
+    catch
+    end
+    n = numel(t_arr) + 1;
+    keyStr = sprintf('%s::%s->%s::%d', char(chart.Path), srcName, dstName, i);
+    t_arr(n).id          = stableId('sftrans', keyStr);
+    t_arr(n).source      = srcName;
+    t_arr(n).destination = dstName;
+    t_arr(n).condition   = char(sfSafeProp(t, 'Condition', ''));
+    t_arr(n).action      = char(sfSafeProp(t, 'ConditionAction', ''));
+end
+end
+
+
+function v = sfSafeProp(obj, name, default)
+% Like safeGet but for Stateflow API objects (no get_param).
+try
+    raw = obj.(name);
+    if isnumeric(raw); v = mat2str(raw);
+    elseif islogical(raw); v = sprintf('%d', raw);
+    else; v = char(string(raw));
+    end
+catch
+    v = default;
+end
+end
+
+
+% =====================================================================
 % Top-level signal lines.
 % =====================================================================
 function out = walkLines(modelName)
@@ -380,7 +517,8 @@ if nargin < 2
         'subsystems', 'signals', 'stateflow', ...
         'inports', 'outports', 'blocks', ...
         'child_subsystem_paths', 'annotations', 'referenced_calibrations', ...
-        'calibrations' ...
+        'calibrations', ...
+        'states', 'transitions' ...
     };
 end
 

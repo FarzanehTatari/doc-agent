@@ -2,7 +2,7 @@
 
 AI-powered documentation for Simulink control models.
 
-**Status**: Phase 2 (Slice 1) + Phase 3 complete. `.slx` → canonical JSON works end-to-end with a toy fixture. See [`../ROADMAP.md`](../ROADMAP.md) for the full plan and [`../DOC_AGENT_BLUEPRINT.md`](../DOC_AGENT_BLUEPRINT.md) for the original v1 specification this rebuild is derived from.
+**Status**: Phases 0–3 complete (Phase 2 Slices 1 + 2 done). `.slx` + `.sldd` → fully populated canonical JSON, with Stateflow walking, calibration values/units/limits, and signal metadata. Phase 4 (generation pipeline) is next. See [`../ROADMAP.md`](../ROADMAP.md) for the full plan and [`../DOC_AGENT_BLUEPRINT.md`](../DOC_AGENT_BLUEPRINT.md) for the original v1 specification this rebuild is derived from.
 
 ---
 
@@ -66,7 +66,7 @@ Categories: `naming`, `domain`, `policy`, `other`. Priorities: `critical`, `high
 | `doc-agent build-test-model [-d <dir>]` | Generate the toy `VSEModel.slx + .sldd` fixture (needs MATLAB). |
 | `doc-agent extract <slx_path> [-o <json>]` | Run `matlab/extract_slx.m` and validate the canonical JSON. |
 
-Both shell out to a headless `matlab -batch ...` call. MATLAB is auto-detected on `PATH` or in `/Applications/MATLAB_R*.app/bin/`; override with `MATLAB_EXECUTABLE` in `.env`.
+Both shell out to a headless `matlab -batch ...` call. MATLAB is auto-detected on `PATH` or in `/Applications/MATLAB_R*.app/bin/`; override with `MATLAB_EXECUTABLE` in `.env`. `extract` automatically walks any linked `.sldd` (via `matlab/extract_sldd.m`) and any Stateflow charts.
 
 End-to-end check:
 

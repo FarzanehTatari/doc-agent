@@ -9,8 +9,12 @@ from doc_agent.extract import (
     Calibration,
     CanonicalModel,
     DataDictionary,
+    DataDictionarySignal,
     ModelHeader,
     Port,
+    Stateflow,
+    StateflowState,
+    StateflowTransition,
     Subsystem,
 )
 
@@ -109,3 +113,63 @@ def test_load_canonical_rejects_garbage(tmp_path):
     p.write_text('{"this_is_not": "a canonical model"}', encoding="utf-8")
     with pytest.raises(RuntimeError):
         MatlabBridge.load_canonical(p)
+
+
+# ---- Slice 2 — populated data dictionary + stateflow ---------------------
+def test_populated_data_dictionary_round_trips():
+    m = CanonicalModel(
+        model=ModelHeader(name="X"),
+        data_dictionary=DataDictionary(
+            name="X.sldd",
+            path="/tmp/X.sldd",
+            calibrations=[
+                Calibration(
+                    name="K_VSE_FILT_TC",
+                    value="0.05",
+                    data_type="double",
+                    units="s",
+                    min="0.01",
+                    max="1.0",
+                    description="Low-pass filter time constant",
+                )
+            ],
+            signals=[
+                DataDictionarySignal(
+                    name="vEgo_kmh",
+                    data_type="double",
+                    description="Filtered ego speed",
+                )
+            ],
+        ),
+    )
+    j = m.model_dump_json()
+    m2 = CanonicalModel.model_validate_json(j)
+    assert m2 == m
+    assert m2.data_dictionary.calibrations[0].units == "s"
+    assert m2.calibration_names() == ["K_VSE_FILT_TC"]
+
+
+def test_stateflow_with_states_and_transitions():
+    sf = Stateflow(
+        name="ModeManager",
+        path="X/ModeManager",
+        states=[
+            StateflowState(name="Init", actions={"entry": "x = 0;"}),
+            StateflowState(name="Running", is_atomic=True),
+        ],
+        transitions=[
+            StateflowTransition(source="Init", destination="Running", condition="ready"),
+        ],
+    )
+    m = CanonicalModel(model=ModelHeader(name="X"), stateflow=[sf])
+    m2 = CanonicalModel.model_validate_json(m.model_dump_json())
+    assert m2 == m
+    assert m2.stateflow[0].states[0].actions["entry"] == "x = 0;"
+    assert m2.stateflow[0].transitions[0].condition == "ready"
+
+
+def test_empty_stateflow_default_is_empty_list():
+    m = CanonicalModel(model=ModelHeader(name="X"))
+    assert m.stateflow == []
+    m2 = CanonicalModel.model_validate({"schema_version": 1, "model": {"name": "X"}})
+    assert m2.stateflow == []

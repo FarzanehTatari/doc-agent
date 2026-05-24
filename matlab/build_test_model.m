@@ -51,14 +51,18 @@ function build_test_model(outDir)
         p.DataType    = 'double';
         p.Min         = cals{i, 4};
         p.Max         = cals{i, 5};
-        p.Description = cals{i, 6};
+        % Units are appended in [brackets] at the end of Description.
+        % extract_sldd.m parses them back out into a dedicated `units` field.
+        % (Simulink.Parameter has no native Unit property prior to fixed-point
+        %  types — embedding in Description is the portable workaround.)
+        p.Description = sprintf('%s [%s]', cals{i, 6}, cals{i, 3});
         addEntry(ds, cals{i, 1}, p);
     end
 
     % A non-calibration signal entry as well
     sig             = Simulink.Signal;
     sig.DataType    = 'double';
-    sig.Description = 'Filtered ego-vehicle speed (output of the VSE).';
+    sig.Description = 'Filtered ego-vehicle speed (output of the VSE) [km/h]';
     addEntry(ds, 'vEgo_kmh', sig);
 
     saveChanges(dd);

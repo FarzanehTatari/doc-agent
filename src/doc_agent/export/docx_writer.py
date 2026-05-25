@@ -217,42 +217,56 @@ class _WalkState:
 
     # --- tables ------------------------------------------------------------
     def consume_table(self, tokens, start: int) -> int:
-        """Build a docx Table from the token stream."""
-        # Collect rows
-        rows: list[list[str]] = []
+        """Build a docx Table from the token stream.
+
+        Each cell's *inline token* (not just its raw text) is stored so we can
+        route it through `_emit_inline_children` and pick up bold / italic /
+        `code` / link formatting inside cells — otherwise backticks etc. would
+        appear as literal text in Word.
+        """
+        rows_inline: list[list] = []   # rows of inline tokens (None for empty cells)
         i = start + 1
         while i < len(tokens) and tokens[i].type != "table_close":
             t = tokens[i]
             if t.type == "tr_open":
-                cells: list[str] = []
+                cells_inline: list = []
                 j = i + 1
                 while j < len(tokens) and tokens[j].type != "tr_close":
                     tj = tokens[j]
                     if tj.type in ("th_open", "td_open"):
-                        # next token is inline content
-                        if j + 1 < len(tokens) and tokens[j + 1].type == "inline":
-                            cells.append(tokens[j + 1].content)
-                            j += 3
-                            continue
+                        inline = (
+                            tokens[j + 1]
+                            if j + 1 < len(tokens) and tokens[j + 1].type == "inline"
+                            else None
+                        )
+                        cells_inline.append(inline)
+                        # th_open/td_open, inline, th_close/td_close → 3 tokens
+                        j += 3
+                        continue
                     j += 1
-                rows.append(cells)
+                rows_inline.append(cells_inline)
                 i = j + 1
                 continue
             i += 1
 
-        if rows:
-            n_cols = max(len(r) for r in rows)
-            table = self.doc.add_table(rows=len(rows), cols=n_cols)
+        if rows_inline:
+            n_cols = max(len(r) for r in rows_inline)
+            table = self.doc.add_table(rows=len(rows_inline), cols=n_cols)
             try:
                 table.style = "Light Grid"
             except KeyError:
                 pass
-            for ri, row in enumerate(rows):
-                for ci, cell_text in enumerate(row):
+            for ri, row in enumerate(rows_inline):
+                for ci, inline in enumerate(row):
                     cell = table.rows[ri].cells[ci]
-                    cell.text = cell_text
+                    # python-docx creates one empty paragraph per cell by default.
+                    # Reuse it: clear text and emit inline runs into it.
+                    para = cell.paragraphs[0]
+                    para.text = ""
+                    if inline is not None:
+                        self._emit_inline_children(inline, para)
                     if ri == 0:
-                        for p in cell.paragraphs:
-                            for run in p.runs:
-                                run.bold = True
+                        # Header row — bold every run that's in the cell now
+                        for run in para.runs:
+                            run.bold = True
         return i + 1

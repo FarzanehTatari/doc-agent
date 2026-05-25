@@ -14,19 +14,20 @@ from pathlib import Path
 from doc_agent.export.bundle import Bundle
 
 
-def write_html(bundle: Bundle, out_path: Path | str) -> Path:
-    """Write `bundle` to a standalone HTML file. Returns the path written."""
+def render_html_string(bundle: Bundle) -> str:
+    """Render `bundle` to a complete standalone HTML *string* (no file I/O).
+
+    Split out so `pdf_writer.write_pdf` can pipe this directly into weasyprint
+    without writing an intermediate .html file.
+    """
     from markdown_it import MarkdownIt
 
-    out_path = Path(out_path)
-    out_path.parent.mkdir(parents=True, exist_ok=True)
     md = (
         MarkdownIt("commonmark", {"breaks": True, "html": False, "linkify": True})
         .enable("table")
         .enable("strikethrough")
     )
 
-    # TOC items + body sections
     toc_items: list[str] = []
     body_parts: list[str] = []
     for entry in bundle.entries:
@@ -45,7 +46,7 @@ def write_html(bundle: Bundle, out_path: Path | str) -> Path:
     )
     body_html = "\n".join(body_parts)
 
-    final = _TEMPLATE.format(
+    return _TEMPLATE.format(
         title=_html.escape(f"{bundle.model_name} — Documentation"),
         model=_html.escape(bundle.model_name),
         generated_at=datetime.now(timezone.utc).isoformat(timespec="seconds"),
@@ -54,7 +55,13 @@ def write_html(bundle: Bundle, out_path: Path | str) -> Path:
         body=body_html,
         entry_count=len(bundle.entries),
     )
-    out_path.write_text(final, encoding="utf-8")
+
+
+def write_html(bundle: Bundle, out_path: Path | str) -> Path:
+    """Write `bundle` to a standalone HTML file. Returns the path written."""
+    out_path = Path(out_path)
+    out_path.parent.mkdir(parents=True, exist_ok=True)
+    out_path.write_text(render_html_string(bundle), encoding="utf-8")
     return out_path
 
 

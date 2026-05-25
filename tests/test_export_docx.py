@@ -98,3 +98,50 @@ def test_docx_renders_code_block(tmp_path):
     write_docx(bundle, out)
     txt = _read_docx_text(out)
     assert "Out1 = K_VSE_FILT_TC * In1" in txt
+
+
+def test_docx_table_cells_render_inline_markdown(tmp_path):
+    """Backticks inside table cells should become monospace runs, not literal `text`."""
+    from docx import Document
+
+    bundle = _bundle([_entry("T",
+        "# T\n\n"
+        "| Name | Value |\n"
+        "|---|---|\n"
+        "| `K_VSE_FILT_TC` | 0.05 |\n"
+        "| `K_VSE_MAX_SPEED` | 300 |\n"
+    )])
+    out = tmp_path / "t.docx"
+    write_docx(bundle, out)
+    doc = Document(str(out))
+    tbl = doc.tables[0]
+
+    # Cell text should NOT contain the literal backticks anymore
+    cell_text = tbl.rows[1].cells[0].text
+    assert "K_VSE_FILT_TC" in cell_text
+    assert "`" not in cell_text, f"backticks should have been stripped: {cell_text!r}"
+
+    # And the cell's run should be set to Consolas (monospace from code_inline)
+    runs = list(tbl.rows[1].cells[0].paragraphs[0].runs)
+    assert runs, "expected at least one run in the cell"
+    fonts = {r.font.name for r in runs if r.font.name}
+    assert "Consolas" in fonts
+
+
+def test_docx_table_header_row_remains_bold(tmp_path):
+    """Regression: after the inline-markdown fix, header cells should still be bold."""
+    from docx import Document
+
+    bundle = _bundle([_entry("T",
+        "# T\n\n"
+        "| Name | Value |\n"
+        "|---|---|\n"
+        "| `K_FOO` | 0.5 |\n"
+    )])
+    out = tmp_path / "th.docx"
+    write_docx(bundle, out)
+    doc = Document(str(out))
+    tbl = doc.tables[0]
+    header_cell = tbl.rows[0].cells[0]
+    runs = list(header_cell.paragraphs[0].runs)
+    assert runs and all(r.bold for r in runs), "header runs should be bold"

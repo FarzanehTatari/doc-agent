@@ -1,6 +1,6 @@
 [project]
 name = "doc-agent"
-version = "0.6.0"
+version = "0.6.1"
 description = "AI-powered documentation for Simulink control models."
 readme = "README.md"
 requires-python = ">=3.11"
@@ -27,6 +27,12 @@ dependencies = [
 dev = [
     "pytest>=8.0",
     "ruff>=0.6",
+]
+# PDF export is opt-in because weasyprint needs system libs (pango/cairo on macOS).
+# Install with:  pip install -e ".[pdf]"
+# On macOS first:  brew install pango
+pdf = [
+    "weasyprint>=60.0",
 ]
 
 [project.scripts]

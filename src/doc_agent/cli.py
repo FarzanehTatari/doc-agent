@@ -685,15 +685,21 @@ def export(
     ),
     format: str = typer.Option(
         "html", "--format", "-f",
-        help="html | docx | all",
+        help="html | docx | pdf | all",
     ),
     out: str = typer.Option(
         None, "--out", "-o",
         help="Output file path (or directory if --format=all). Default: alongside source.",
     ),
 ) -> None:
-    """Consolidate generated Markdown into HTML and/or DOCX."""
-    from doc_agent.export import Bundle, write_docx, write_html
+    """Consolidate generated Markdown into HTML, DOCX, and/or PDF."""
+    from doc_agent.export import (
+        Bundle,
+        pdf_is_available,
+        write_docx,
+        write_html,
+        write_pdf,
+    )
 
     src = _Path(source)
     if not src.exists():
@@ -708,8 +714,11 @@ def export(
         raise typer.Exit(code=1)
 
     fmt = (format or "html").lower()
-    if fmt not in {"html", "docx", "all"}:
-        console.print(f"[red]Unknown format: {format}. Use html, docx, or all.[/red]")
+    valid = {"html", "docx", "pdf", "all"}
+    if fmt not in valid:
+        console.print(
+            f"[red]Unknown format: {format}.[/red] Use one of: {', '.join(sorted(valid))}."
+        )
         raise typer.Exit(code=1)
 
     # Resolve output base
@@ -726,17 +735,35 @@ def export(
     table.add_row("Model", bundle.model_name)
     table.add_row("Entries", str(len(bundle)))
 
-    written: list[_Path] = []
-    if fmt in ("html", "all"):
+    want_html = fmt in ("html", "all")
+    want_docx = fmt in ("docx", "all")
+    want_pdf  = fmt in ("pdf", "all")
+
+    # If user asked for PDF specifically and weasyprint isn't available,
+    # error early with the install hint rather than after writing other files.
+    if fmt == "pdf" and not pdf_is_available():
+        from doc_agent.export.pdf_writer import _INSTALL_HINT
+        console.print(f"[red]{_INSTALL_HINT}[/red]")
+        raise typer.Exit(code=1)
+
+    if want_html:
         html_path = out_path.with_suffix(".html") if out_path.suffix != ".html" else out_path
         write_html(bundle, html_path)
-        written.append(html_path)
         table.add_row("HTML", str(html_path))
-    if fmt in ("docx", "all"):
+    if want_docx:
         docx_path = out_path.with_suffix(".docx") if out_path.suffix != ".docx" else out_path
         write_docx(bundle, docx_path)
-        written.append(docx_path)
         table.add_row("DOCX", str(docx_path))
+    if want_pdf:
+        if pdf_is_available():
+            pdf_path = out_path.with_suffix(".pdf") if out_path.suffix != ".pdf" else out_path
+            try:
+                write_pdf(bundle, pdf_path)
+                table.add_row("PDF", str(pdf_path))
+            except Exception as e:  # noqa: BLE001
+                table.add_row("PDF", f"[red]failed: {e}[/red]")
+        else:
+            table.add_row("PDF", "[yellow]skipped (weasyprint not installed)[/yellow]")
 
     console.print(table)
 

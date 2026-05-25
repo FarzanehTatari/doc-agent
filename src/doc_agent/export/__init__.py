@@ -9,6 +9,16 @@ Public surface:
 
 from doc_agent.export.bundle import Bundle, BundleEntry
 from doc_agent.export.docx_writer import write_docx
-from doc_agent.export.html_writer import write_html
+from doc_agent.export.html_writer import render_html_string, write_html
+from doc_agent.export.pdf_writer import is_available as pdf_is_available
+from doc_agent.export.pdf_writer import write_pdf
 
-__all__ = ["Bundle", "BundleEntry", "write_html", "write_docx"]
+__all__ = [
+    "Bundle",
+    "BundleEntry",
+    "pdf_is_available",
+    "render_html_string",
+    "write_docx",
+    "write_html",
+    "write_pdf",
+]

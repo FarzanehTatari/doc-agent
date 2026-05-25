@@ -32,19 +32,56 @@ from doc_agent.export import (   # noqa: E402
 )
 
 
-# ---- 1. Bundle preview ------------------------------------------------------
+# ---- 1. Bundle preview & pick documents ------------------------------------
 with st.container(border=True):
     st.subheader("1 · Bundle")
     bundle = Bundle.from_directory(gen_dir)
     st.markdown(f"**Source:** `{gen_dir}`")
     st.markdown(f"**Model:** `{bundle.model_name}` · {len(bundle)} document(s)")
-    st.dataframe(
-        [
-            {"order": i + 1, "kind": e.kind, "title": e.title,
-             "file": e.source_path.name}
-            for i, e in enumerate(bundle.entries)
-        ],
-        width="stretch", hide_index=True,
+
+    # Editable table with a per-row "include" checkbox. Order is preserved,
+    # title + kind + filename are read-only.
+    table_rows = [
+        {
+            "include": True,
+            "order": i + 1,
+            "kind": e.kind,
+            "title": e.title,
+            "file": e.source_path.name,
+        }
+        for i, e in enumerate(bundle.entries)
+    ]
+
+    st.caption("Tick / untick the **include** column to choose which "
+               "documents to export.")
+    edited = st.data_editor(
+        table_rows,
+        key="export_table",
+        width="stretch",
+        hide_index=True,
+        column_config={
+            "include": st.column_config.CheckboxColumn(
+                "include", help="Untick to exclude this document from the export."
+            ),
+            "order":   st.column_config.NumberColumn("order", disabled=True),
+            "kind":    st.column_config.TextColumn("kind",    disabled=True),
+            "title":   st.column_config.TextColumn("title",   disabled=True),
+            "file":    st.column_config.TextColumn("file",    disabled=True),
+        },
+    )
+
+    # Build a filtered Bundle that the writers will consume.
+    selected_names = {row["file"] for row in edited if row.get("include")}
+    filtered_entries = [
+        e for e in bundle.entries if e.source_path.name in selected_names
+    ]
+    selected_bundle = Bundle(
+        model_name=bundle.model_name,
+        entries=filtered_entries,
+        source_dir=bundle.source_dir,
+    )
+    st.caption(
+        f"**{len(selected_bundle)} of {len(bundle)}** document(s) will be exported."
     )
 
 
@@ -66,22 +103,33 @@ with st.container(border=True):
             "(macOS may need `brew install pango` first)."
         )
 
+    has_selection = len(selected_bundle) > 0
+    if not has_selection:
+        st.info("Tick at least one document in the bundle to enable export.")
+
     run = st.button(
         "▶  Export selected formats",
         type="primary",
-        disabled=not (want_html or want_docx or want_pdf),
+        disabled=not has_selection or not (want_html or want_docx or want_pdf),
     )
 
     if run:
-        out_base = gen_dir / bundle.model_name
+        # If the user exported a subset, name the output files with a "_partial"
+        # suffix so a later full-bundle export doesn't overwrite it (and the
+        # original "VSEModel.docx" remains the canonical full export).
+        is_partial = len(selected_bundle) < len(bundle)
+        stem = bundle.model_name + ("_partial" if is_partial else "")
+        out_base = gen_dir / stem
         written: dict[str, Path] = dict(get(K.EXPORT_PATHS) or {})
         results: list[str] = []
 
-        with st.status("Exporting…", expanded=True) as status:
+        with st.status(
+            f"Exporting {len(selected_bundle)} document(s)…", expanded=True
+        ) as status:
             if want_html:
                 p = out_base.with_suffix(".html")
                 try:
-                    write_html(bundle, p)
+                    write_html(selected_bundle, p)
                     written["html"] = p
                     results.append(f"✅ HTML → `{p}`")
                 except Exception as e:  # noqa: BLE001
@@ -89,7 +137,7 @@ with st.container(border=True):
             if want_docx:
                 p = out_base.with_suffix(".docx")
                 try:
-                    write_docx(bundle, p)
+                    write_docx(selected_bundle, p)
                     written["docx"] = p
                     results.append(f"✅ DOCX → `{p}`")
                 except Exception as e:  # noqa: BLE001
@@ -97,7 +145,7 @@ with st.container(border=True):
             if want_pdf:
                 p = out_base.with_suffix(".pdf")
                 try:
-                    write_pdf(bundle, p)
+                    write_pdf(selected_bundle, p)
                     written["pdf"] = p
                     results.append(f"✅ PDF → `{p}`")
                 except Exception as e:  # noqa: BLE001

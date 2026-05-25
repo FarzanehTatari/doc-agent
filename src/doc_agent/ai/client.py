@@ -250,6 +250,50 @@ class AIClient:
             lambda: self._client.messages.create(**kwargs), what="chat_with_tools"
         )
 
+    # ----- chat with tools (streaming) ------------------------------------
+    def chat_with_tools_stream(
+        self,
+        messages: list[dict],
+        tools: list[dict],
+        *,
+        on_text: Callable[[str], None] | None = None,
+        system: str | None = None,
+        max_tokens: int = 4096,
+        temperature: float | None = None,
+        model: str | None = None,
+    ):
+        """Streaming counterpart of `chat_with_tools`.
+
+        Fires `on_text(delta)` for each text-delta as it arrives (token-level
+        streaming, so the UI can render text live), then returns the FINAL
+        message — same shape as `chat_with_tools` (i.e. with `.content`,
+        `.stop_reason`, `.usage`), so the agent loop can keep handling tool
+        calls exactly as before.
+
+        Streaming is *not* automatically retried; an error mid-stream
+        propagates. The agent loop catches and surfaces it.
+        """
+        kwargs: dict = {
+            "model": model or self.model,
+            "max_tokens": max_tokens,
+            "messages": messages,
+            "tools": tools,
+        }
+        if system:
+            kwargs["system"] = system
+        if temperature is not None:
+            kwargs["temperature"] = temperature
+
+        with self._client.messages.stream(**kwargs) as stream:
+            if on_text:
+                for chunk in stream.text_stream:
+                    on_text(chunk)
+            else:
+                # Drain the stream so the final message is fully populated.
+                for _ in stream.text_stream:
+                    pass
+            return stream.get_final_message()
+
     # ----- chat (streaming) ------------------------------------------------
     def chat_stream(
         self,

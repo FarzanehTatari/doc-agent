@@ -113,6 +113,7 @@ def generate_for_subsystem(
     additional_user_context: str | None = None,
     on_tool=None,
     on_text=None,
+    stream: bool = False,
 ) -> GeneratedDoc:
     """Generate one deliverable for one subsystem via the tool-using agent.
 
@@ -145,6 +146,7 @@ def generate_for_subsystem(
         max_iterations=max_iterations,
         on_text=on_text,
         on_tool=on_tool,
+        stream=stream,
     )
 
     # Pull citations out of any search_rag calls
@@ -263,6 +265,9 @@ def generate_all(
     max_iterations: int = 12,
     on_progress=None,            # fn(current, total, subsystem_path, kind, doc_or_none)
     on_tool=None,                # per-call tool hook, passed through
+    on_text=None,                # per-call text hook (fn(text) or fn(delta) if stream)
+    on_doc_start=None,           # fn(subsystem_path, kind) — fires before each run
+    stream: bool = False,        # token-level streaming via SDK; on_text gets deltas
     _runner=None,                # tests: inject a custom per-call runner
 ) -> GenerationRunSummary:
     """Walk every subsystem bottom-up; run every deliverable kind per subsystem.
@@ -299,8 +304,10 @@ def generate_all(
         for deliverable in deliverables:
             current += 1
             child_ctx = _build_child_context(sub, deliverable.kind, docs_by_path_kind)
+            if on_doc_start:
+                on_doc_start(sub.path, deliverable.kind)
             try:
-                doc = runner(
+                runner_kwargs = dict(
                     client=client,
                     canonical=canonical,
                     subsystem_path=sub.path,
@@ -312,6 +319,12 @@ def generate_all(
                     additional_user_context=child_ctx,
                     on_tool=on_tool,
                 )
+                # Test-injected runners may have a narrower signature, so only
+                # pass the streaming knobs to the real runner.
+                if runner is generate_for_subsystem:
+                    runner_kwargs["on_text"] = on_text
+                    runner_kwargs["stream"] = stream
+                doc = runner(**runner_kwargs)
             except Exception as e:  # noqa: BLE001
                 summary.failures.append(
                     f"{sub.path} · {deliverable.kind}: {type(e).__name__}: {e}"

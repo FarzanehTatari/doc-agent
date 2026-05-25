@@ -50,6 +50,13 @@ with st.container(border=True):
     max_tokens = c1.slider("Max output tokens / call", 512, 8192, 4096, step=256)
     max_iters = c2.slider("Max tool-loop iterations", 4, 24, 12)
 
+    stream_text = st.checkbox(
+        "Stream text live as the model writes",
+        value=True,
+        help="Show the document being written token-by-token. Uncheck for a faster, "
+        "quieter run with only progress updates.",
+    )
+
 
 # ---- 2. Run -----------------------------------------------------------------
 with st.container(border=True):
@@ -102,6 +109,34 @@ with st.container(border=True):
         log = st.empty()
         msgs: list[str] = []
 
+        # Live-streaming pane — populated only when stream_text is enabled.
+        stream_holder: dict[str, object] = {"buf": "", "placeholder": None, "title": ""}
+        if stream_text:
+            with st.container(border=True):
+                st.caption("✍️  Live preview — current document being written")
+                stream_title = st.empty()
+                stream_holder["title"] = stream_title
+                stream_holder["placeholder"] = st.empty()
+
+        def on_doc_start(sub_path, kind):
+            """Reset the live pane at the start of each (sub, kind) generation."""
+            stream_holder["buf"] = ""
+            ph = stream_holder.get("placeholder")
+            title = stream_holder.get("title")
+            if title:
+                title.markdown(f"**{sub_path}** · _{kind}_")
+            if ph:
+                ph.markdown("_…waiting for first token…_")
+
+        def on_text(delta: str):
+            """Append each streamed delta to the live pane."""
+            if not stream_text:
+                return
+            stream_holder["buf"] = (stream_holder["buf"] or "") + (delta or "")
+            ph = stream_holder.get("placeholder")
+            if ph:
+                ph.markdown(stream_holder["buf"])
+
         def on_progress(current, total, sub_path, kind, doc):
             frac = current / total if total else 1.0
             label = f"[{current}/{total}] {sub_path} · {kind}"
@@ -126,6 +161,9 @@ with st.container(border=True):
                 max_tokens=max_tokens,
                 max_iterations=max_iters,
                 on_progress=on_progress,
+                on_text=on_text if stream_text else None,
+                on_doc_start=on_doc_start if stream_text else None,
+                stream=stream_text,
             )
         except Exception as e:  # noqa: BLE001
             st.exception(e)
@@ -154,11 +192,11 @@ with st.container(border=True):
                     st.code(f, language=None)
 
 
-# ---- 3. Preview generated docs ---------------------------------------------
+# ---- 3. Preview & edit generated docs --------------------------------------
 summary = get(K.GENERATION_SUMMARY)
 if summary is not None and summary.docs:
     st.markdown("---")
-    st.subheader("3 · Preview")
+    st.subheader("3 · Preview & edit")
     labels = [f"{d.subsystem_path} · {d.deliverable}" for d in summary.docs]
     choice = st.selectbox("Document", options=range(len(labels)), format_func=lambda i: labels[i])
     doc = summary.docs[choice]
@@ -169,9 +207,68 @@ if summary is not None and summary.docs:
     c3.metric("Input tok",   f"{doc.input_tokens:,}")
     c4.metric("Output tok",  f"{doc.output_tokens:,}")
 
-    st.markdown(doc.text)
-    if doc.citations:
-        st.caption("Citations: " + ", ".join(doc.citations))
+    # Per-doc editor key — keeps unsaved edits separate across documents.
+    editor_key = f"editor::{doc.subsystem_path}::{doc.deliverable}"
+
+    mode = st.radio(
+        "Mode",
+        options=["View", "Edit"],
+        horizontal=True,
+        key=f"mode_{choice}",
+        label_visibility="collapsed",
+    )
+
+    if mode == "View":
+        st.markdown(doc.text)
+        if doc.citations:
+            st.caption("Citations: " + ", ".join(doc.citations))
+
+        # Hint when the user has unsaved buffered edits sitting in the editor
+        buf = st.session_state.get(editor_key)
+        if buf is not None and buf != doc.text:
+            st.info(
+                "You have unsaved edits in the editor for this document. "
+                "Switch to **Edit** mode to save or revert them.",
+                icon="✏️",
+            )
+    else:  # Edit mode
+        # Compute the on-disk path the same way write_run_outputs does.
+        target_dir = Path(get(K.GENERATED_DIR) or (settings.data_dir / "generated" / canonical.model.name))
+        md_path = target_dir / doc.filename(strip_model_prefix=canonical.model.name)
+
+        st.caption(f"Editing `{md_path.name}` — Markdown source.")
+        st.text_area(
+            "Markdown source",
+            value=doc.text,
+            key=editor_key,
+            height=480,
+            label_visibility="collapsed",
+        )
+
+        b1, b2, b3, _ = st.columns([1, 1, 1, 3])
+        save = b1.button("💾 Save", key=f"save_btn_{choice}", type="primary")
+        revert = b2.button("↺ Revert", key=f"revert_btn_{choice}")
+        b3.caption("Save writes both the in-memory doc and the `.md` on disk.")
+
+        if revert:
+            # Drop the buffered edits — text_area will repopulate from doc.text
+            st.session_state.pop(editor_key, None)
+            st.rerun()
+
+        if save:
+            from doc_agent.generate import write_run_outputs
+
+            new_text = st.session_state.get(editor_key, doc.text)
+            doc.text = new_text  # mutate the GeneratedDoc in the summary
+
+            # Re-emit the full run (docs + _INDEX.md) so links + metadata stay
+            # consistent. write_run_outputs is idempotent.
+            try:
+                target_dir.mkdir(parents=True, exist_ok=True)
+                write_run_outputs(summary, target_dir)
+                st.toast(f"Saved {md_path.name}", icon="💾")
+            except Exception as e:  # noqa: BLE001
+                st.error(f"Failed to write `{md_path}`: {e}")
 
     st.markdown("---")
     st.success("Ready to export. Continue to the **Export** page.")

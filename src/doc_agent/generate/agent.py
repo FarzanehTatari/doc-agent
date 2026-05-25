@@ -61,40 +61,79 @@ def run_agent(
     ctx: ToolContext,
     *,
     user_prompt: str,
+    messages_history: list[dict] | None = None,
     system: str | None = None,
     max_tokens: int = 4096,
     max_iterations: int = 12,
     on_text: Callable[[str], None] | None = None,
     on_tool: Callable[[str, dict], None] | None = None,
+    stream: bool = False,
 ) -> AgentResult:
     """Run a tool-using agent loop until end_turn or max_iterations.
 
     Args:
-        client:         AIClient (must support chat_with_tools)
-        ctx:            ToolContext — canonical JSON + optional RAG + facts
-        user_prompt:    the user's request (single message)
-        system:         system prompt (deliverable-specific instructions)
-        max_tokens:     per-turn output cap
-        max_iterations: hard stop on tool-loop iterations
-        on_text:        optional callback fired with each text chunk between turns
-        on_tool:        optional callback fired with (tool_name, tool_input)
+        client:           AIClient (must support chat_with_tools, and
+                          chat_with_tools_stream when stream=True)
+        ctx:              ToolContext — canonical JSON + optional RAG + facts
+        user_prompt:      the user's new turn (will be appended to history)
+        messages_history: prior turns from a conversation, in Anthropic format
+                          (`[{"role": "user"/"assistant", "content": "…"}, …]`).
+                          When supplied, the agent treats this as ongoing
+                          dialogue. Empty / None = fresh single-turn invocation.
+        system:           system prompt (deliverable-specific instructions)
+        max_tokens:       per-turn output cap
+        max_iterations:   hard stop on tool-loop iterations
+        on_text:          optional callback fired with text from the model.
+                          - When stream=False: fires once per turn with the
+                            full accumulated text of that turn.
+                          - When stream=True: fires per text-delta as the SDK
+                            yields them (token-level streaming).
+        on_tool:          optional callback fired with (tool_name, tool_input)
+        stream:           when True, use the streaming SDK so on_text receives
+                          token-level deltas. Requires the client to support
+                          `chat_with_tools_stream`. Default False preserves
+                          the original blocking behavior.
 
     Returns:
         AgentResult with the final text, every tool call made, and usage stats.
     """
     tools = tool_definitions()
-    messages: list[dict] = [{"role": "user", "content": user_prompt}]
+
+    # Anthropic requires strict user/assistant alternation starting with user.
+    # If the caller's history ends with a user message (e.g. an earlier run
+    # crashed before saving the assistant response), drop trailing user msgs
+    # so the new user_prompt below doesn't create a user/user adjacency.
+    history = list(messages_history or [])
+    while history and history[-1].get("role") == "user":
+        history.pop()
+
+    messages: list[dict] = history + [{"role": "user", "content": user_prompt}]
     result = AgentResult(text="")
+
+    # Pick the SDK call: streaming (token-level deltas) vs blocking.
+    use_stream = stream and hasattr(client, "chat_with_tools_stream")
 
     for iteration in range(max_iterations):
         result.iterations = iteration + 1
         try:
-            response = client.chat_with_tools(
-                messages=messages,
-                tools=tools,
-                system=system,
-                max_tokens=max_tokens,
-            )
+            if use_stream:
+                # In streaming mode, on_text fires per-delta via the SDK.
+                # We pass it straight through; the post-turn on_text call
+                # below is suppressed so we don't double-fire.
+                response = client.chat_with_tools_stream(
+                    messages=messages,
+                    tools=tools,
+                    system=system,
+                    max_tokens=max_tokens,
+                    on_text=on_text,
+                )
+            else:
+                response = client.chat_with_tools(
+                    messages=messages,
+                    tools=tools,
+                    system=system,
+                    max_tokens=max_tokens,
+                )
         except Exception as e:  # noqa: BLE001
             log.debug("Agent call failed", exc_info=True)
             result.error = f"{type(e).__name__}: {e}"
@@ -117,7 +156,9 @@ def run_agent(
             elif btype == "tool_use":
                 tool_uses.append(block)
 
-        if turn_text and on_text:
+        # In streaming mode, on_text already fired per-delta during the
+        # SDK call — don't double-fire with the per-turn aggregate.
+        if turn_text and on_text and not use_stream:
             on_text(turn_text)
 
         # End-of-conversation: this is the deliverable text — return it

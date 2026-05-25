@@ -64,9 +64,12 @@ class Settings(BaseSettings):
     matlab_timeout_s: int = Field(default=300, alias="MATLAB_TIMEOUT_S", ge=10, le=3600)
 
     # --- UI branding (Phase 6) -------------------------------------
-    # Path to a logo image (PNG/SVG/JPG). Relative paths resolve against the
-    # repo root. Shown in the sidebar top via `st.logo`. Empty = no logo.
+    # Path to a logo image (PNG / SVG / JPG). Relative paths resolve against
+    # the repo root. Shown right-aligned at the top of every page's main area.
+    # Empty = no logo.
     ui_logo_path: str = Field(default="", alias="UI_LOGO_PATH")
+    # Max width in CSS pixels (preserves aspect ratio).
+    ui_logo_width: int = Field(default=240, alias="UI_LOGO_WIDTH", ge=40, le=1200)
     ui_brand_name: str = Field(default="doc-agent", alias="UI_BRAND_NAME")
     # Hide Streamlit's default top-right toolbar (running cyclist, Stop,
     # Deploy button, hamburger menu). Useful for local / branded deploys.

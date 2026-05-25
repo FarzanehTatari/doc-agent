@@ -35,6 +35,12 @@ TOOL USE RULES:
 - Call `list_facts` to learn the project's naming conventions and policies; honor them.
 - Call `search_rag` when you need design rationale or context not in the model itself.
 - If a tool returns an error, do not pretend it succeeded — adapt or say so explicitly.
+- If `get_subsystem` returns empty `blocks`, `inports`, `outports`, AND
+  `child_subsystem_paths`, the subsystem might actually be a Stateflow chart
+  (which appears as an empty subsystem to `get_subsystem`). Before concluding
+  "empty shell", call `list_stateflow_charts` and then `get_stateflow_chart`
+  for the matching path. Document the chart's states, transitions, and actions
+  if present.
 
 RESPONSE FORMAT:
 - Your final response IS the document. Do NOT preamble with explanatory text like

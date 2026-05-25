@@ -651,11 +651,17 @@ def generate(
     if doc.error:
         console.print(f"[yellow]Note:[/yellow] {doc.error}")
 
+    # Same path scheme as `generate-all`:
+    #   <data_dir>/generated/<model_name>/<subsystem>_<kind>.md
+    # so running either command updates the same file for the same target.
     settings.ensure_data_dir()
-    out_dir = settings.data_dir / "generated"
-    out_dir.mkdir(parents=True, exist_ok=True)
-    safe_path = subsystem.replace("/", "_")
-    out_path = _Path(out) if out else out_dir / f"{p.stem}_{safe_path}_{deliverable.kind}.md"
+    if out:
+        out_path = _Path(out)
+        out_path.parent.mkdir(parents=True, exist_ok=True)
+    else:
+        out_dir = settings.data_dir / "generated" / canonical.model.name
+        out_dir.mkdir(parents=True, exist_ok=True)
+        out_path = out_dir / doc.filename(strip_model_prefix=canonical.model.name)
     out_path.write_text(doc.to_markdown(), encoding="utf-8")
 
     table = Table.grid(padding=(0, 2))

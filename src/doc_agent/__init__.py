@@ -1,3 +1,3 @@
 """doc-agent — AI-powered documentation for Simulink control models."""
 
-__version__ = "0.5.1"
+__version__ = "0.5.3"

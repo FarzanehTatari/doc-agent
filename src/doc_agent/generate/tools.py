@@ -165,6 +165,55 @@ def _list_facts(ctx: ToolContext) -> dict:
     }
 
 
+def _list_stateflow_charts(ctx: ToolContext) -> dict:
+    """List every Stateflow chart in the model with summary counts."""
+    charts = ctx.canonical.stateflow or []
+    return {
+        "charts": [
+            {
+                "name": c.name,
+                "path": c.path,
+                "state_count": len(c.states),
+                "transition_count": len(c.transitions),
+            }
+            for c in charts
+        ]
+    }
+
+
+def _get_stateflow_chart(ctx: ToolContext, path: str) -> dict:
+    """Return full details of one Stateflow chart: states, transitions, actions."""
+    charts = ctx.canonical.stateflow or []
+    for c in charts:
+        if c.path == path:
+            return {
+                "name": c.name,
+                "path": c.path,
+                "states": [
+                    {
+                        "name": s.name,
+                        "is_atomic": s.is_atomic,
+                        "actions": s.actions,
+                    }
+                    for s in c.states
+                ],
+                "transitions": [
+                    {
+                        "source": t.source,
+                        "destination": t.destination,
+                        "condition": t.condition,
+                        "action": t.action,
+                    }
+                    for t in c.transitions
+                ],
+            }
+    available = [c.path for c in charts]
+    return {
+        "error": f"No Stateflow chart at path '{path}'.",
+        "available_paths": available,
+    }
+
+
 # ---- registry ---------------------------------------------------------------
 ToolFn = Callable[..., dict]
 
@@ -177,6 +226,8 @@ _DISPATCH: dict[str, ToolFn] = {
     "list_dd_signals":   _list_dd_signals,
     "search_rag":        _search_rag,
     "list_facts":        _list_facts,
+    "list_stateflow_charts": _list_stateflow_charts,
+    "get_stateflow_chart":   _get_stateflow_chart,
 }
 
 
@@ -274,6 +325,34 @@ def tool_definitions() -> list[dict]:
                 "that the documentation must respect."
             ),
             "input_schema": {"type": "object", "properties": {}},
+        },
+        {
+            "name": "list_stateflow_charts",
+            "description": (
+                "List every Stateflow chart in the model. Call this when "
+                "`get_subsystem` returns no blocks/ports/children for a subsystem "
+                "whose name suggests state logic (e.g. *Manager, *Monitor, *Sequencer) — "
+                "a Stateflow chart appears as an empty subsystem to `get_subsystem` "
+                "but its real content (states + transitions) lives here."
+            ),
+            "input_schema": {"type": "object", "properties": {}},
+        },
+        {
+            "name": "get_stateflow_chart",
+            "description": (
+                "Get the states, transitions, entry/during/exit actions, and "
+                "transition conditions of one Stateflow chart by path."
+            ),
+            "input_schema": {
+                "type": "object",
+                "properties": {
+                    "path": {
+                        "type": "string",
+                        "description": "Full chart path, e.g. 'VSEModel/StatusMonitor'.",
+                    }
+                },
+                "required": ["path"],
+            },
         },
     ]
 

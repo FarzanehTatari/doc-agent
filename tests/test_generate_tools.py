@@ -9,6 +9,9 @@ from doc_agent.extract import (
     ModelHeader,
     Port,
     Signal,
+    Stateflow,
+    StateflowState,
+    StateflowTransition,
     Subsystem,
 )
 from doc_agent.generate.tools import (
@@ -47,6 +50,21 @@ def _sample() -> CanonicalModel:
                 to_block="Toy/WheelAverager/In1",
             ),
         ],
+        stateflow=[
+            Stateflow(
+                name="StatusMonitor",
+                path="Toy/StatusMonitor",
+                states=[
+                    StateflowState(name="OK",       is_atomic=True,  actions={"entry": "s = 0;"}),
+                    StateflowState(name="DEGRADED", is_atomic=True,  actions={"entry": "s = 1;"}),
+                ],
+                transitions=[
+                    StateflowTransition(
+                        source="OK", destination="DEGRADED", condition="[wheels_partial]"
+                    ),
+                ],
+            ),
+        ],
         data_dictionary=DataDictionary(
             name="Toy.sldd",
             calibrations=[
@@ -63,7 +81,7 @@ def _sample() -> CanonicalModel:
 # ---- definitions ----------------------------------------------------------
 def test_tool_definitions_have_required_fields():
     defs = tool_definitions()
-    assert len(defs) >= 6
+    assert len(defs) >= 8   # 6 base + 2 stateflow
     for d in defs:
         assert "name" in d
         assert "description" in d and d["description"]
@@ -170,6 +188,42 @@ def test_list_facts_without_memory_returns_empty():
     ctx = ToolContext(canonical=_sample(), facts=None)
     out = dispatch_tool_call(ctx, "list_facts", {})
     assert out["facts"] == []
+
+
+# ---- stateflow tools -----------------------------------------------------
+def test_list_stateflow_charts_with_chart():
+    ctx = ToolContext(canonical=_sample())
+    out = dispatch_tool_call(ctx, "list_stateflow_charts", {})
+    assert len(out["charts"]) == 1
+    assert out["charts"][0]["name"] == "StatusMonitor"
+    assert out["charts"][0]["state_count"] == 2
+    assert out["charts"][0]["transition_count"] == 1
+
+
+def test_list_stateflow_charts_empty():
+    canon = _sample()
+    canon.stateflow = []
+    ctx = ToolContext(canonical=canon)
+    out = dispatch_tool_call(ctx, "list_stateflow_charts", {})
+    assert out == {"charts": []}
+
+
+def test_get_stateflow_chart_returns_full_detail():
+    ctx = ToolContext(canonical=_sample())
+    out = dispatch_tool_call(ctx, "get_stateflow_chart", {"path": "Toy/StatusMonitor"})
+    assert out["name"] == "StatusMonitor"
+    assert len(out["states"]) == 2
+    assert out["states"][0]["actions"]["entry"] == "s = 0;"
+    assert len(out["transitions"]) == 1
+    assert out["transitions"][0]["source"] == "OK"
+    assert out["transitions"][0]["condition"] == "[wheels_partial]"
+
+
+def test_get_stateflow_chart_unknown_path_lists_available():
+    ctx = ToolContext(canonical=_sample())
+    out = dispatch_tool_call(ctx, "get_stateflow_chart", {"path": "Toy/Missing"})
+    assert "error" in out
+    assert "Toy/StatusMonitor" in out["available_paths"]
 
 
 # ---- error handling ------------------------------------------------------

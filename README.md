@@ -2,7 +2,7 @@
 
 AI-powered documentation for Simulink control models.
 
-**Status**: Phases 0–4 complete. `doc-agent generate-all` walks every subsystem bottom-up, runs every requested deliverable, feeds parents their children's docs as context, and writes a complete doc set with an `_INDEX.md`. See [`../ROADMAP.md`](../ROADMAP.md) for the full plan and [`../DOC_AGENT_BLUEPRINT.md`](../DOC_AGENT_BLUEPRINT.md) for the original v1 spec.
+**Status**: Phases 0–5 (Slice 1) complete. End-to-end: `.slx` → canonical JSON → tool-using agent → per-subsystem Markdown → consolidated HTML/DOCX deliverable. See [`../ROADMAP.md`](../ROADMAP.md) for the full plan and [`../DOC_AGENT_BLUEPRINT.md`](../DOC_AGENT_BLUEPRINT.md) for the original v1 spec.
 
 ---
 
@@ -65,6 +65,7 @@ Categories: `naming`, `domain`, `policy`, `other`. Priorities: `critical`, `high
 |---|---|
 | `doc-agent generate <json> [-s <path>] [-k autodoc|sysreq|unitreq]` | Run the tool-using agent on one subsystem; produces Markdown. |
 | `doc-agent generate-all <json> [-k autodoc,sysreq,unitreq] [-d <dir>]` | Walk every subsystem bottom-up, run every kind, write a complete doc set with `_INDEX.md`. |
+| `doc-agent export <dir-or-file> [-f html|docx|all] [-o <out>]` | Consolidate generated Markdown into a single HTML or DOCX deliverable with TOC. |
 
 The agent loop:
 

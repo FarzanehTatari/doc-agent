@@ -678,6 +678,69 @@ def generate(
     console.print(table)
 
 
+@app.command()
+def export(
+    source: str = typer.Argument(
+        ..., help="A generated-docs directory (or a single .md file)."
+    ),
+    format: str = typer.Option(
+        "html", "--format", "-f",
+        help="html | docx | all",
+    ),
+    out: str = typer.Option(
+        None, "--out", "-o",
+        help="Output file path (or directory if --format=all). Default: alongside source.",
+    ),
+) -> None:
+    """Consolidate generated Markdown into HTML and/or DOCX."""
+    from doc_agent.export import Bundle, write_docx, write_html
+
+    src = _Path(source)
+    if not src.exists():
+        console.print(f"[red]No such path:[/red] {source}")
+        raise typer.Exit(code=1)
+
+    bundle = (
+        Bundle.from_single_file(src) if src.is_file() else Bundle.from_directory(src)
+    )
+    if bundle.is_empty():
+        console.print(f"[red]No .md files found in {source}[/red]")
+        raise typer.Exit(code=1)
+
+    fmt = (format or "html").lower()
+    if fmt not in {"html", "docx", "all"}:
+        console.print(f"[red]Unknown format: {format}. Use html, docx, or all.[/red]")
+        raise typer.Exit(code=1)
+
+    # Resolve output base
+    if out:
+        out_path = _Path(out)
+    else:
+        parent = src.parent if src.is_file() else src
+        stem = bundle.model_name if not src.is_file() else src.stem
+        out_path = parent / stem  # extension appended per-format below
+
+    table = Table.grid(padding=(0, 2))
+    table.add_column(style="dim", justify="right")
+    table.add_column()
+    table.add_row("Model", bundle.model_name)
+    table.add_row("Entries", str(len(bundle)))
+
+    written: list[_Path] = []
+    if fmt in ("html", "all"):
+        html_path = out_path.with_suffix(".html") if out_path.suffix != ".html" else out_path
+        write_html(bundle, html_path)
+        written.append(html_path)
+        table.add_row("HTML", str(html_path))
+    if fmt in ("docx", "all"):
+        docx_path = out_path.with_suffix(".docx") if out_path.suffix != ".docx" else out_path
+        write_docx(bundle, docx_path)
+        written.append(docx_path)
+        table.add_row("DOCX", str(docx_path))
+
+    console.print(table)
+
+
 @app.command("generate-all")
 def generate_all_cmd(
     extracted_json: str = typer.Argument(

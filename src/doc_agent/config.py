@@ -63,6 +63,15 @@ class Settings(BaseSettings):
     matlab_executable: str = Field(default="", alias="MATLAB_EXECUTABLE")
     matlab_timeout_s: int = Field(default=300, alias="MATLAB_TIMEOUT_S", ge=10, le=3600)
 
+    # --- UI branding (Phase 6) -------------------------------------
+    # Path to a logo image (PNG/SVG/JPG). Relative paths resolve against the
+    # repo root. Shown in the sidebar top via `st.logo`. Empty = no logo.
+    ui_logo_path: str = Field(default="", alias="UI_LOGO_PATH")
+    ui_brand_name: str = Field(default="doc-agent", alias="UI_BRAND_NAME")
+    # Hide Streamlit's default top-right toolbar (running cyclist, Stop,
+    # Deploy button, hamburger menu). Useful for local / branded deploys.
+    ui_hide_chrome: bool = Field(default=False, alias="UI_HIDE_CHROME")
+
     @field_validator("data_dir", mode="before")
     @classmethod
     def _expand_data_dir(cls, v):

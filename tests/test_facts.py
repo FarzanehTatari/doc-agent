@@ -72,3 +72,82 @@ def test_update_changes_id(tmp_path):
     new_id = f.all()[0].id
     assert new_id != old_id
     assert f.all()[0].text == "Updated."
+
+
+def test_disabled_fact_round_trips(tmp_path):
+    """Round-trip regression: disabling a fact must persist through save+load
+    without (a) flipping back to enabled or (b) accumulating ~~ markers in the text.
+    """
+    p = tmp_path / "facts.md"
+    f = FactsMemory(p)
+    fact = f.add(
+        "Signal names use camelCase.",
+        category="naming",
+        priority="critical",
+        keywords=["naming"],
+    )
+    f.update(fact.id, enabled=False)
+    f.save()
+
+    # Reload from disk
+    f2 = FactsMemory(p)
+    assert len(f2) == 1
+    loaded = f2.all()[0]
+    assert loaded.enabled is False, "enabled state was lost on reload"
+    # Tildes must be stripped from the text
+    assert loaded.text == "Signal names use camelCase."
+    assert "~~" not in loaded.text
+    # Keywords should survive too
+    assert loaded.keywords == ["naming"]
+
+
+def test_re_enabling_strips_markers_cleanly(tmp_path):
+    """Toggle off → save → toggle on → save: text stays clean, no leftover tildes."""
+    p = tmp_path / "facts.md"
+    f = FactsMemory(p)
+    fact = f.add("Vehicle speed is always in km/h.", category="domain", priority="high")
+    f.update(fact.id, enabled=False)
+    f.save()
+
+    f2 = FactsMemory(p)
+    f2.update(f2.all()[0].id, enabled=True)
+    f2.save()
+
+    f3 = FactsMemory(p)
+    assert f3.all()[0].enabled is True
+    assert f3.all()[0].text == "Vehicle speed is always in km/h."
+    assert "~~" not in f3.all()[0].text
+
+
+def test_disabled_fact_with_tags_round_trips(tmp_path):
+    """Strikethrough + trailing tags both need to be handled."""
+    p = tmp_path / "facts.md"
+    f = FactsMemory(p)
+    fact = f.add(
+        "Use ASIL-D for safety functions.",
+        category="policy",
+        priority="critical",
+        keywords=["safety", "asil"],
+    )
+    f.update(fact.id, enabled=False)
+    f.save()
+
+    f2 = FactsMemory(p)
+    loaded = f2.all()[0]
+    assert loaded.enabled is False
+    assert loaded.text == "Use ASIL-D for safety functions."
+    assert set(loaded.keywords) == {"safety", "asil"}
+
+
+def test_text_with_internal_tildes_is_not_misread_as_disabled(tmp_path):
+    """If a fact's text legitimately contains `~~` in the middle, don't
+    mistake it for a strikethrough wrapper."""
+    p = tmp_path / "facts.md"
+    f = FactsMemory(p)
+    f.add("Some prose ~~ in the middle of text.", category="other")
+    f.save()
+
+    f2 = FactsMemory(p)
+    loaded = f2.all()[0]
+    assert loaded.enabled is True
+    assert "~~" in loaded.text   # the inline tildes survive untouched

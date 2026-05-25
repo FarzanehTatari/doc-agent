@@ -1,6 +1,6 @@
 [project]
 name = "doc-agent"
-version = "0.6.1"
+version = "0.7.7"
 description = "AI-powered documentation for Simulink control models."
 readme = "README.md"
 requires-python = ">=3.11"
@@ -33,6 +33,11 @@ dev = [
 # On macOS first:  brew install pango
 pdf = [
     "weasyprint>=60.0",
+]
+# Streamlit web UI. Install with:  pip install -e ".[ui]"
+# 1.46+ is required for the `width='stretch'` API (use_container_width was deprecated).
+ui = [
+    "streamlit>=1.46",
 ]
 
 [project.scripts]

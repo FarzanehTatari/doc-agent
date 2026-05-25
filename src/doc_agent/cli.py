@@ -678,6 +678,72 @@ def generate(
     console.print(table)
 
 
+@app.command("ui")
+def ui_cmd(
+    port: int = typer.Option(8501, "--port", "-p", help="Port to serve on."),
+    host: str = typer.Option("localhost", "--host", help="Bind address."),
+    headless: bool = typer.Option(
+        False, "--headless",
+        help="Don't auto-open the browser (useful on a remote server).",
+    ),
+) -> None:
+    """Launch the Streamlit web UI.
+
+    Requires the `[ui]` extras: `pip install -e ".[ui]"`.
+    """
+    import subprocess
+    import sys
+
+    try:
+        import streamlit  # noqa: F401
+    except ImportError as e:
+        console.print(
+            "[red]Streamlit is not installed.[/red] "
+            "Install with [bold]pip install -e \".[ui]\"[/bold]."
+        )
+        raise typer.Exit(code=1) from e
+
+    import doc_agent.ui as ui_pkg
+    entry = _Path(ui_pkg.__file__).parent / "home.py"
+    if not entry.exists():
+        console.print(f"[red]UI entrypoint not found:[/red] {entry}")
+        raise typer.Exit(code=1)
+
+    cmd = [
+        sys.executable, "-m", "streamlit", "run", str(entry),
+        "--server.port", str(port),
+        "--server.address", host,
+    ]
+    if headless:
+        cmd += ["--server.headless", "true", "--browser.gatherUsageStats", "false"]
+
+    console.print(
+        f"[dim]Launching Streamlit at[/dim] [bold]http://{host}:{port}[/bold] "
+        "[dim](Ctrl-C to stop)[/dim]"
+    )
+
+    # Use Popen so we keep a handle to the child and can terminate it
+    # explicitly on Ctrl-C. `subprocess.run` doesn't always propagate SIGINT
+    # to grandchild processes cleanly, which leaves Streamlit running and the
+    # terminal hung.
+    proc = subprocess.Popen(cmd)
+    try:
+        proc.wait()
+    except KeyboardInterrupt:
+        console.print("\n[dim]Stopping Streamlit…[/dim]")
+        proc.terminate()
+        try:
+            proc.wait(timeout=5)
+        except subprocess.TimeoutExpired:
+            console.print("[yellow]Streamlit didn't stop in 5 s; force-killing.[/yellow]")
+            proc.kill()
+            proc.wait()
+        console.print("[dim]bye[/dim]")
+    else:
+        if proc.returncode and proc.returncode != 0:
+            raise typer.Exit(code=proc.returncode)
+
+
 @app.command()
 def export(
     source: str = typer.Argument(

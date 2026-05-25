@@ -61,6 +61,11 @@ _TAG_RE = re.compile(r"#([A-Za-z0-9_-]+)")
 # Strip a contiguous trailing run of `  #tag #tag` from the end of the line,
 # but leave inline #mentions and sentence punctuation untouched.
 _TRAILING_TAGS_RE = re.compile(r"(?:\s+#[A-Za-z0-9_-]+)+\s*$")
+# Markdown strikethrough `~~...~~` is the convention `to_markdown()` uses to
+# encode `enabled=False`. We use a single regex (rather than startswith/endswith)
+# so a fact whose text happens to contain `~~` in the middle isn't accidentally
+# misclassified as disabled.
+_STRIKETHROUGH_RE = re.compile(r"^~~(.+?)~~$", re.DOTALL)
 
 
 @dataclass
@@ -77,9 +82,8 @@ class Fact:
 
     def to_markdown(self) -> str:
         kw = " " + " ".join(f"#{k}" for k in self.keywords) if self.keywords else ""
-        prefix = "" if self.enabled else "~~"
-        suffix = "~~" if self.enabled is False else ""
-        return f"- [{self.priority}] {prefix}{self.text}{suffix}{kw}"
+        body = f"~~{self.text}~~" if not self.enabled else self.text
+        return f"- [{self.priority}] {body}{kw}"
 
 
 class FactsMemory:
@@ -213,6 +217,13 @@ class FactsMemory:
             # Strip only the trailing run of tags — preserve sentence punctuation
             # and any inline #mentions inside the prose.
             clean = _TRAILING_TAGS_RE.sub("", body).rstrip()
+            # Detect strikethrough → enabled=False, and strip the `~~ ... ~~`
+            # so the text round-trips cleanly (no tildes accumulating).
+            enabled = True
+            strike = _STRIKETHROUGH_RE.match(clean)
+            if strike:
+                clean = strike.group(1).strip()
+                enabled = False
             self._facts.append(
                 Fact(
                     id=self._make_id(clean, current_cat),
@@ -220,6 +231,7 @@ class FactsMemory:
                     category=current_cat,
                     priority=m.group("priority").lower(),  # type: ignore[arg-type]
                     keywords=tags,
+                    enabled=enabled,
                 )
             )
         return len(self._facts)

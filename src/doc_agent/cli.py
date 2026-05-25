@@ -672,6 +672,138 @@ def generate(
     console.print(table)
 
 
+@app.command("generate-all")
+def generate_all_cmd(
+    extracted_json: str = typer.Argument(
+        ..., help="Path to canonical JSON from `doc-agent extract`."
+    ),
+    kinds: str = typer.Option(
+        "autodoc", "--kinds", "-k",
+        help="Comma-separated deliverable kinds: autodoc,sysreq,unitreq",
+    ),
+    out_dir: str = typer.Option(
+        None, "--out-dir", "-d",
+        help="Output directory. Default: project_lib/generated/<model_name>/.",
+    ),
+    no_rag: bool = typer.Option(False, "--no-rag"),
+    no_facts: bool = typer.Option(False, "--no-facts"),
+    verbose: bool = typer.Option(False, "--verbose", "-v",
+                                  help="Print each tool call as it happens."),
+    max_iterations: int = typer.Option(12, "--max-iterations", min=1, max=50),
+    max_tokens: int = typer.Option(4096, "--max-tokens", min=256, max=64000),
+) -> None:
+    """Walk every subsystem bottom-up; run every requested deliverable per subsystem."""
+    _ensure_key_or_exit()
+
+    p = _Path(extracted_json)
+    if not p.exists():
+        console.print(f"[red]No such file:[/red] {extracted_json}")
+        raise typer.Exit(code=1)
+
+    from doc_agent.extract import MatlabBridge
+    from doc_agent.generate import generate_all, write_run_outputs
+
+    try:
+        canonical = MatlabBridge.load_canonical(p)
+    except Exception as e:  # noqa: BLE001
+        console.print(f"[red]Invalid canonical JSON:[/red] {e}")
+        raise typer.Exit(code=1) from e
+
+    if not canonical.subsystems:
+        console.print(f"[red]No subsystems in {extracted_json}[/red]")
+        raise typer.Exit(code=1)
+
+    kind_list = [k.strip().lower() for k in kinds.split(",") if k.strip()]
+    if not kind_list:
+        console.print("[red]No deliverable kinds given. Use --kinds autodoc,sysreq,unitreq[/red]")
+        raise typer.Exit(code=1)
+
+    rag = None
+    if not no_rag:
+        try:
+            r = _load_rag()
+            if r.stats()["chunks"] > 0:
+                rag = r
+        except Exception:  # noqa: BLE001
+            rag = None
+    facts = None if no_facts else _load_facts()
+
+    client = AIClient()
+
+    target_dir = (
+        _Path(out_dir)
+        if out_dir
+        else settings.data_dir / "generated" / canonical.model.name
+    )
+    target_dir.mkdir(parents=True, exist_ok=True)
+
+    total_runs = len(canonical.subsystems) * len(kind_list)
+    console.print(
+        f"[dim]Model:[/dim] [bold]{canonical.model.name}[/bold]  "
+        f"[dim]subsystems:[/dim] {len(canonical.subsystems)}  "
+        f"[dim]kinds:[/dim] {', '.join(kind_list)}  "
+        f"[dim]total runs:[/dim] {total_runs}"
+    )
+    console.print(f"[dim]Out dir:[/dim] {target_dir}")
+
+    on_tool = None
+    if verbose:
+        def on_tool(name, inp):
+            inp_preview = ", ".join(f"{k}={v!r}" for k, v in (inp or {}).items())
+            console.print(f"    [dim]→[/dim] [cyan]{name}[/cyan]({inp_preview})")
+
+    def on_progress(current, total, sub_path, kind, doc):
+        if doc is None:
+            console.print(f"[red][{current}/{total}][/red] {sub_path} · {kind} — [red]FAILED[/red]")
+        else:
+            console.print(
+                f"[green][{current}/{total}][/green] {sub_path} · {kind}  "
+                f"[dim]({doc.iterations} iter, {doc.tool_calls_made} tool, "
+                f"{format_tokens(doc.input_tokens)}+{format_tokens(doc.output_tokens)} tok)[/dim]"
+            )
+
+    try:
+        summary = generate_all(
+            client=client,
+            canonical=canonical,
+            kinds=kind_list,
+            rag=rag,
+            facts=facts,
+            max_tokens=max_tokens,
+            max_iterations=max_iterations,
+            on_progress=on_progress,
+            on_tool=on_tool,
+        )
+    except Exception as e:  # noqa: BLE001
+        console.print(f"[red]generate_all failed:[/red] {e}")
+        raise typer.Exit(code=1) from e
+
+    index_path = write_run_outputs(summary, target_dir)
+
+    table = Table.grid(padding=(0, 2))
+    table.add_column(style="dim", justify="right")
+    table.add_column()
+    table.add_row("Model", summary.model)
+    table.add_row("Docs", str(len(summary.docs)))
+    table.add_row("Tool calls", str(summary.total_tool_calls))
+    table.add_row(
+        "Tokens",
+        f"in {format_tokens(summary.total_input_tokens)}  "
+        f"out {format_tokens(summary.total_output_tokens)}",
+    )
+    table.add_row("Elapsed", f"{summary.elapsed_s:.1f} s")
+    if summary.failures:
+        table.add_row("Failures", str(len(summary.failures)))
+    table.add_row("Index", str(index_path))
+    console.print(table)
+
+    if summary.failures:
+        console.print("\n[yellow]Failures:[/yellow]")
+        for f in summary.failures:
+            console.print(f"  • {f}")
+        raise typer.Exit(code=1)
+
+
 @app.command("build-test-model")
 def build_test_model(
     out_dir: str = typer.Option(

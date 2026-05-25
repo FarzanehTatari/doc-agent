@@ -2,7 +2,7 @@
 
 AI-powered documentation for Simulink control models.
 
-**Status**: Phases 0–4 (Slice 1) complete. The tool-using agent can read the canonical JSON via tools, search the RAG library, honor facts, and produce Design Docs / System Requirements / Unit Requirements for any subsystem. See [`../ROADMAP.md`](../ROADMAP.md) for the full plan and [`../DOC_AGENT_BLUEPRINT.md`](../DOC_AGENT_BLUEPRINT.md) for the original v1 spec.
+**Status**: Phases 0–4 complete. `doc-agent generate-all` walks every subsystem bottom-up, runs every requested deliverable, feeds parents their children's docs as context, and writes a complete doc set with an `_INDEX.md`. See [`../ROADMAP.md`](../ROADMAP.md) for the full plan and [`../DOC_AGENT_BLUEPRINT.md`](../DOC_AGENT_BLUEPRINT.md) for the original v1 spec.
 
 ---
 
@@ -63,7 +63,8 @@ Categories: `naming`, `domain`, `policy`, `other`. Priorities: `critical`, `high
 
 | Command | Purpose |
 |---|---|
-| `doc-agent generate <json> [-s <path>] [-k autodoc|sysreq|unitreq]` | Run the tool-using agent on canonical JSON; produces Markdown. |
+| `doc-agent generate <json> [-s <path>] [-k autodoc|sysreq|unitreq]` | Run the tool-using agent on one subsystem; produces Markdown. |
+| `doc-agent generate-all <json> [-k autodoc,sysreq,unitreq] [-d <dir>]` | Walk every subsystem bottom-up, run every kind, write a complete doc set with `_INDEX.md`. |
 
 The agent loop:
 

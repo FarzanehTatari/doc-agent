@@ -966,6 +966,127 @@ def generate_all_cmd(
         raise typer.Exit(code=1)
 
 
+# ---- deploy: Databricks push / pull (databricks branch only) ----------------
+# These commands live behind a sub-app so they're discoverable via
+# `doc-agent deploy --help`, but invoking them doesn't import any Databricks
+# SDK at module-load time — only when actually used. That keeps the CLI
+# instant for the laptop-only workflow.
+
+deploy_app = typer.Typer(
+    help="Push canonical JSONs and pull generated docs to/from a Databricks Volume.",
+    no_args_is_help=True,
+)
+app.add_typer(deploy_app, name="deploy")
+
+
+@deploy_app.command("push")
+def deploy_push(
+    paths: list[str] = typer.Argument(
+        ...,
+        help="One or more canonical JSON files to upload (or pass --all to "
+             "push everything in settings.extracted_dir).",
+    ),
+    volume_path: str = typer.Option(
+        "/Volumes/main/doc_agent/project_lib",
+        "--volume", "-v",
+        help="Root of the Unity Catalog Volume on Databricks.",
+    ),
+    no_validate: bool = typer.Option(
+        False, "--no-validate",
+        help="Skip the CanonicalModel shape check before uploading.",
+    ),
+    no_overwrite: bool = typer.Option(
+        False, "--no-overwrite",
+        help="Fail if a destination file already exists (default: overwrite).",
+    ),
+) -> None:
+    """Push canonical JSON(s) from the laptop to the Databricks Volume."""
+    from doc_agent.deploy.databricks import push_canonical_json
+
+    failures: list[tuple[str, str]] = []
+    for src in paths:
+        try:
+            res = push_canonical_json(
+                src,
+                volume_path=volume_path,
+                validate=not no_validate,
+                overwrite=not no_overwrite,
+            )
+        except Exception as e:  # noqa: BLE001
+            console.print(f"[red]✗[/red] {src} — {type(e).__name__}: {e}")
+            failures.append((src, str(e)))
+            continue
+        console.print(
+            f"[green]✓[/green] {res.src.name} → [dim]{res.dst}[/dim] "
+            f"({res.bytes_copied:,} B via {res.transport})"
+        )
+    if failures:
+        raise typer.Exit(code=1)
+
+
+@deploy_app.command("push-all")
+def deploy_push_all(
+    volume_path: str = typer.Option(
+        "/Volumes/main/doc_agent/project_lib",
+        "--volume", "-v",
+        help="Root of the Unity Catalog Volume on Databricks.",
+    ),
+) -> None:
+    """Push every canonical JSON in `settings.extracted_dir` to the Volume."""
+    from doc_agent.deploy.databricks import push_all_canonicals
+
+    try:
+        results = push_all_canonicals(volume_path=volume_path)
+    except Exception as e:  # noqa: BLE001
+        console.print(f"[red]Push failed:[/red] {e}")
+        raise typer.Exit(code=1) from e
+
+    if not results:
+        console.print(
+            f"[yellow]No JSONs found in {settings.extracted_dir}.[/yellow] "
+            "Run [bold]doc-agent extract[/bold] first."
+        )
+        return
+    for r in results:
+        console.print(
+            f"[green]✓[/green] {r.src.name} → [dim]{r.dst}[/dim] "
+            f"({r.bytes_copied:,} B via {r.transport})"
+        )
+    console.print(f"\nUploaded {len(results)} file(s).")
+
+
+@deploy_app.command("pull")
+def deploy_pull(
+    model: str = typer.Argument(..., help="Model name (matches the canonical's model.name)."),
+    volume_path: str = typer.Option(
+        "/Volumes/main/doc_agent/project_lib",
+        "--volume", "-v",
+        help="Root of the Unity Catalog Volume on Databricks.",
+    ),
+    out_dir: str = typer.Option(
+        None, "--out", "-o",
+        help="Local destination (default: <data_dir>/generated/<model>/).",
+    ),
+) -> None:
+    """Pull every generated Markdown for a model back to the laptop."""
+    from doc_agent.deploy.databricks import pull_generated
+
+    try:
+        files = pull_generated(
+            model_name=model, volume_path=volume_path, local_dir=out_dir
+        )
+    except Exception as e:  # noqa: BLE001
+        console.print(f"[red]Pull failed:[/red] {e}")
+        raise typer.Exit(code=1) from e
+
+    if not files:
+        console.print(f"[yellow]No .md files found at {volume_path}/generated/{model}/[/yellow]")
+        return
+    for f in files:
+        console.print(f"[green]✓[/green] {f}")
+    console.print(f"\nPulled {len(files)} file(s).")
+
+
 @app.command("build-test-model")
 def build_test_model(
     out_dir: str = typer.Option(

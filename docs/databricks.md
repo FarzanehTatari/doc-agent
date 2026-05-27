@@ -103,8 +103,24 @@ the Databricks adapter just sets those before the app code runs.
 # 1. On the laptop with MATLAB: extract a model.
 doc-agent extract VSEModel.slx -o project_lib/extracted/VSEModel.json
 
-# 2. Push the canonical JSON to the Volume.
+# 2. Push the canonical JSON to the Volume. Three equivalent options:
+doc-agent deploy push project_lib/extracted/VSEModel.json   # ← preferred
+doc-agent deploy push-all                                    # all in extracted/
 bash databricks/scripts/upload_canonical.sh project_lib/extracted/VSEModel.json
+```
+
+`doc-agent deploy push` validates the file against the `CanonicalModel`
+schema before sending — so you find out about a malformed JSON locally in
+0.1s instead of after an upload + a notebook crash. It prefers the
+Databricks Python SDK if installed (`pip install databricks-sdk`) and falls
+back to the `databricks` CLI binary otherwise.
+
+To pull generated docs back to the laptop (handy for committing them to
+git, or sharing an export):
+
+```bash
+doc-agent deploy pull VSEModel
+# → writes to <data_dir>/generated/VSEModel/
 ```
 
 Then either:

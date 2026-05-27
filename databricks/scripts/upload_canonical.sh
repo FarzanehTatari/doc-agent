@@ -1,45 +1,30 @@
 #!/usr/bin/env bash
-# upload_canonical.sh — push a canonical JSON from the laptop to the Volume.
+# upload_canonical.sh — thin wrapper around `doc-agent deploy push`.
 #
-# The MATLAB-driven Extract step still runs on a machine with MATLAB.
-# Once it produces project_lib/extracted/<Model>.json, this script copies
-# that file to /Volumes/<catalog>/<schema>/project_lib/extracted/ in your
-# Databricks workspace, where the Generate notebook / App can pick it up.
+# Kept around for muscle-memory and for environments where running the Typer
+# CLI is awkward. For everyday use, prefer:
 #
-# Requires:
-#   * databricks CLI v0.205+   (`brew install databricks` or `pip install databricks-cli`)
-#   * `databricks configure`  has been run once with your workspace URL + PAT
+#     doc-agent deploy push project_lib/extracted/VSEModel.json
+#     doc-agent deploy push-all                 # everything in extracted/
+#     doc-agent deploy pull VSEModel            # generated docs back to laptop
+#
+# Both routes call the same `push_canonical_json` in
+# src/doc_agent/deploy/databricks.py, which validates the file against the
+# CanonicalModel schema before uploading.
 #
 # Usage:
 #   bash databricks/scripts/upload_canonical.sh project_lib/extracted/VSEModel.json
-#   bash databricks/scripts/upload_canonical.sh project_lib/extracted/VSEModel.json \
-#       /Volumes/main/doc_agent/project_lib/extracted/
-#
-# The default destination matches the bundle's `volume_path` variable. If you
-# changed that variable, pass an explicit destination as the second argument.
+#   bash databricks/scripts/upload_canonical.sh path/to/file.json \
+#       /Volumes/main/doc_agent/project_lib
 
 set -euo pipefail
 
 SRC="${1:-}"
-DST="${2:-/Volumes/main/doc_agent/project_lib/extracted/}"
+DST="${2:-/Volumes/main/doc_agent/project_lib}"
 
 if [[ -z "$SRC" ]]; then
-    echo "usage: $0 <canonical.json> [dst-volume-path]" >&2
+    echo "usage: $0 <canonical.json> [volume-path]" >&2
     exit 2
 fi
-if [[ ! -f "$SRC" ]]; then
-    echo "error: file not found — $SRC" >&2
-    exit 2
-fi
-if ! command -v databricks >/dev/null 2>&1; then
-    echo "error: databricks CLI not on PATH. See databricks/scripts/setup_workspace.sh" >&2
-    exit 3
-fi
 
-DST_FILE="${DST%/}/$(basename "$SRC")"
-
-echo "Uploading:"
-echo "  src: $SRC"
-echo "  dst: $DST_FILE"
-databricks fs cp --overwrite "$SRC" "dbfs:$DST_FILE"
-echo "OK"
+exec doc-agent deploy push --volume "$DST" "$SRC"

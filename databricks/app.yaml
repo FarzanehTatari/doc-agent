@@ -1,0 +1,29 @@
+# Databricks Apps manifest for the doc-agent Streamlit UI.
+#
+# Apps reads this file to know how to start the app and which secrets to
+# inject as env vars. The `command:` is the literal shell command run inside
+# the app container; everything in `env:` becomes process env before launch.
+
+command:
+  - streamlit
+  - run
+  - src/doc_agent/ui/Home.py
+  - --server.port=${DATABRICKS_APP_PORT}
+  - --server.address=0.0.0.0
+  - --browser.gatherUsageStats=false
+
+env:
+  # Where project_lib lives. Maps to a Unity Catalog Volume the app's
+  # service principal must have READ + WRITE on.
+  - name: DATA_DIR
+    value: /Volumes/main/doc_agent/project_lib
+
+  # Hide Streamlit's deploy/cyclist chrome — looks more polished embedded in
+  # the Databricks UI.
+  - name: UI_HIDE_CHROME
+    value: "1"
+
+  # API key — pulled from Databricks Secrets at app start. The app's service
+  # principal must have READ on the secret scope.
+  - name: ANTHROPIC_API_KEY
+    valueFrom: doc-agent/anthropic-api-key

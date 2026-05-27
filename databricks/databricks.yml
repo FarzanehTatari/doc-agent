@@ -1,0 +1,105 @@
+# Databricks Asset Bundle — declarative deployment config for doc-agent.
+#
+# Deploy from your laptop with:
+#     databricks bundle deploy --target dev
+# (assumes you have the Databricks CLI configured: `databricks configure`).
+#
+# This bundle declares two resources:
+#   * an App        — hosts the Streamlit UI at /apps/doc-agent
+#   * a Job         — scheduled generate_all run over /Volumes/.../extracted/
+#
+# Fill in the TODOs for your workspace before first deploy.
+
+bundle:
+  name: doc-agent
+
+# --- Where to deploy ---------------------------------------------------------
+workspace:
+  # TODO: your workspace URL, e.g. https://adb-1234567890.0.azuredatabricks.net
+  host: ${var.workspace_host}
+
+variables:
+  workspace_host:
+    description: Databricks workspace URL.
+    default: https://adb-CHANGEME.azuredatabricks.net
+  volume_path:
+    description: Unity Catalog Volume mounted at runtime (holds project_lib/).
+    default: /Volumes/main/doc_agent/project_lib
+  secret_scope:
+    description: Databricks secret scope holding the Anthropic API key.
+    default: doc-agent
+  secret_key:
+    description: Key name within the scope.
+    default: anthropic-api-key
+  catalog:
+    description: Unity Catalog catalog name.
+    default: main
+  schema:
+    description: Unity Catalog schema name.
+    default: doc_agent
+
+# --- Resources ---------------------------------------------------------------
+resources:
+
+  apps:
+    doc_agent_ui:
+      name: doc-agent
+      description: Streamlit UI for browsing generated docs and chatting with the agent.
+      source_code_path: ../   # repo root — Apps will pick up databricks/app.yaml
+      config:
+        command:
+          - streamlit
+          - run
+          - src/doc_agent/ui/Home.py
+          - --server.port=${env.DATABRICKS_APP_PORT}
+        env:
+          - name: DATA_DIR
+            value: ${var.volume_path}
+          - name: UI_HIDE_CHROME
+            value: "1"
+        # API key comes from the secret at runtime — never bake into env.
+        # See databricks/app.yaml for the secret binding.
+
+  jobs:
+    nightly_generate:
+      name: doc-agent · nightly generate-all
+      description: Regenerate docs for every canonical JSON in the Volume.
+      schedule:
+        # 06:00 UTC every day (adjust to your timezone via QUARTZ_CRON).
+        quartz_cron_expression: "0 0 6 * * ?"
+        timezone_id: UTC
+        pause_status: PAUSED  # un-pause once you've smoke-tested
+      tasks:
+        - task_key: generate_all
+          notebook_task:
+            notebook_path: ./notebooks/01_generate.py
+            base_parameters:
+              volume_path: ${var.volume_path}
+              secret_scope: ${var.secret_scope}
+              secret_key: ${var.secret_key}
+          # Serverless compute; swap for a job_cluster block if your workspace
+          # requires classic clusters.
+          environment_key: default
+      environments:
+        - environment_key: default
+          spec:
+            client: "1"
+            dependencies:
+              # Pin doc-agent to the repo this bundle was deployed from.
+              # On first deploy, this picks up the current commit.
+              - "../."
+
+# --- Per-target overrides ----------------------------------------------------
+targets:
+  dev:
+    mode: development
+    default: true
+  prod:
+    mode: production
+    workspace:
+      host: ${var.workspace_host}
+    resources:
+      jobs:
+        nightly_generate:
+          schedule:
+            pause_status: UNPAUSED

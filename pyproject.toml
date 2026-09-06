@@ -4,8 +4,8 @@ version = "0.8.0"
 description = "AI-powered documentation for Simulink control models."
 readme = "README.md"
 requires-python = ">=3.11"
-license = { text = "Proprietary" }
-authors = [{ name = "Farzaneh" }]
+license = { text = "MIT" }
+authors = [{ name = "Farzaneh Tatari" }]
 keywords = ["simulink", "documentation", "llm", "anthropic", "claude"]
 
 dependencies = [
@@ -62,3 +62,7 @@ target-version = "py311"
 [tool.ruff.lint]
 select = ["E", "F", "I", "B", "UP", "SIM"]
 ignore = ["E501"]
+
+[project.urls]
+Homepage = "https://github.com/FarzanehTatari/doc-agent"
+Repository = "https://github.com/FarzanehTatari/doc-agent"

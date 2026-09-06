@@ -2,7 +2,7 @@
 
 AI-powered documentation for Simulink control models.
 
-**Status**: Phases 0–6 (Slice 1) complete. End-to-end CLI + a Streamlit web UI (`doc-agent ui`) covering Extract → Generate → Export → Download. See [`../ROADMAP.md`](../ROADMAP.md) for the full plan and [`../DOC_AGENT_BLUEPRINT.md`](../DOC_AGENT_BLUEPRINT.md) for the original v1 spec.
+**Status**: Phases 0–6 (Slice 1) complete. End-to-end CLI + a Streamlit web UI (`doc-agent ui`) covering Extract → Generate → Export → Download. 
 
 ---
 
